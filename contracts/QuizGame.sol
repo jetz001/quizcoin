@@ -27,12 +27,18 @@ contract QuizGame is AccessControl {
     uint256 public nextQuestionId;
     mapping(uint256 => mapping(address => uint256)) public lastAnswerAttemptDay;
 
-    uint256 public constant LEVEL_100_REWARD_AMOUNT = 10_000 * (10 ** 18);
+    // ค่าคงที่ของเกม (อัปเดตตามที่คุณต้องการ)
+    uint256 public constant LEVEL_100_REWARD_AMOUNT = 10_000 * (10 ** 18); // รางวัล 10,000 QZC สำหรับ Difficulty 100 (ไม่ลด)
+
     uint256 public constant POOL_SOLVE_WINDOW_DURATION = 3 minutes;
     uint256 public constant REWARD_FEE_PERCENTAGE_BPS = 50;
 
-    uint256 public constant BLOCKS_PER_HALVING_PERIOD = 700_800; // Adjust as needed for BSC Testnet block time
-    uint256 public constant INITIAL_BASE_REWARD_LEVEL_1_99 = 100 * (10 ** 18);
+    // *** อัปเดตตรงนี้ตามความต้องการใหม่ของคุณ ***
+    // 4 ปี บน BSC Testnet (3 วินาที/Block) = 42,076,800 Blocks
+    uint256 public constant BLOCKS_PER_HALVING_PERIOD = 42_076_800;
+
+    uint256 public constant INITIAL_BASE_REWARD_LEVEL_1_99 = 5000 * (10 ** 18); // รางวัลพื้นฐานเริ่มต้นสำหรับ Difficulty 1-99 คือ 5,000 QZC
+    uint256 public constant MIN_REWARD_LEVEL_1_99 = 100 * (10 ** 18);     // รางวัลขั้นต่ำสำหรับ Difficulty 1-99 คือ 100 QZC
 
     event QuestionCreated(uint256 indexed questionId, uint8 difficulty, uint256 startTime);
     event QuestionSolved(uint256 indexed questionId, address indexed solver, uint256 rewardAmount, bool isSoloSolve);
@@ -96,10 +102,10 @@ contract QuizGame is AccessControl {
             q.solvedTime = block.timestamp;
 
             quizCoin.mint(msg.sender, netReward);
-            
+
             quizCoin.transfer(address(quizCoin), feeAmount);
             quizCoin.burn(feeAmount);
-            
+
             emit QuestionSolved(_questionId, msg.sender, rewardAmount, true);
         } else {
             revert("QuizGame: Use PoolManager for Pool submissions");
@@ -114,9 +120,9 @@ contract QuizGame is AccessControl {
         require(q.hintCost > 0, "QuizGame: No hint available or free");
 
         quizCoin.transferFrom(msg.sender, address(quizCoin), q.hintCost);
-        
+
         quizCoin.burn(q.hintCost);
-        
+
         emit HintBought(_questionId, msg.sender, q.hintCost);
     }
 
@@ -136,7 +142,7 @@ contract QuizGame is AccessControl {
         require(q.exists, "QuizGame: Question does not exist");
         require(!q.isSolved, "QuizGame: Question already solved");
         require(q.isPoolInitiated, "QuizGame: Pool not initiated");
-        
+
         require(block.timestamp >= q.poolInitiatedTime + POOL_SOLVE_WINDOW_DURATION, "QuizGame: Pool window not closed");
 
         q.isSolved = true;
@@ -157,9 +163,14 @@ contract QuizGame is AccessControl {
 
         uint256 baseReward = INITIAL_BASE_REWARD_LEVEL_1_99;
         if (halvingPeriods > 0) {
+            // หารด้วย 2 ยกกำลัง halvingPeriods
             baseReward = baseReward / (2 ** halvingPeriods);
         }
 
-        return baseReward * _difficulty;
+        uint256 finalCalculatedReward = baseReward * _difficulty;
+
+        // ตรวจสอบรางวัลขั้นต่ำสำหรับ difficulty 1-99
+        // ถ้า finalCalculatedReward น้อยกว่า MIN_REWARD_LEVEL_1_99 ให้ใช้ MIN_REWARD_LEVEL_1_99 แทน
+        return finalCalculatedReward > MIN_REWARD_LEVEL_1_99 ? finalCalculatedReward : MIN_REWARD_LEVEL_1_99;
     }
 }
