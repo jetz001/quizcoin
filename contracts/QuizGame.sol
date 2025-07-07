@@ -53,7 +53,7 @@ contract QuizGame is Initializable, OwnableUpgradeable, AccessControlUpgradeable
     uint256 public constant REWARD_MULTIPLIER_LEVEL_1_99 = 100; // สำหรับ Difficulty 1-99
     uint256 public constant MIN_REWARD_LEVEL_1_99 = 10 * (10 ** 18); // 10 QZC
     uint256 public constant MIN_REWARD_LEVEL_100 = 50 * (10 ** 18); // 50 QZC
-    uint256 public constant DEVELOPER_FEE_BPS = 500; // 5% (500 basis points)
+    uint256 public constant DEVELOPER_FEE_BPS = 50; // 5% (500 basis points)
     uint256 public constant HINT_COST_MULTIPLIER = 10; // Hint Cost is difficulty * 10
 
     // บทบาทสำหรับ AccessControl
