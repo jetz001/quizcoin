@@ -1,163 +1,81 @@
+// contracts/PoolManager.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/AccessControl.sol"; // ตรวจสอบว่ามีบรรทัดนี้
-// import "@openzeppelin/contracts/utils/math/SafeMath.sol"; // บรรทัดนี้ต้องถูกลบไปแล้ว
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "./QuizCoin.sol";
-import "./QuizGame.sol";
+import "./interfaces/IPoolManager.sol"; // เพื่อ implements interface
 
-contract PoolManager is AccessControl {
-    // using SafeMath for uint256; // บรรทัดนี้ต้องถูกลบไปแล้ว
+contract PoolManager is AccessControl, IPoolManager {
+    using SafeERC20 for IERC20; // ใช้ SafeERC20
 
-    QuizCoin public quizCoin;
-    QuizGame public quizGame; // เพิ่มตัวแปรนี้
+    // Roles
+    bytes32 public constant POOL_ADMIN_ROLE = keccak256("POOL_ADMIN_ROLE"); // อาจจะไม่ได้ใช้โดยตรงใน QuizGame
+    bytes32 public constant GAME_ADMIN_ROLE_IN_POOL_MANAGER = keccak256("GAME_ADMIN_ROLE_IN_POOL_MANAGER"); // Role สำหรับ QuizGame Contract
 
-    bytes32 public constant POOL_ADMIN_ROLE = keccak256("POOL_ADMIN_ROLE");
+    // แก้ไข: เปลี่ยนประเภทของ quizCoin จาก QuizCoin เป็น IERC20
+    IERC20 public quizCoin;
+    address public developerFundAddress; // Address เพื่อรับค่า hint cost
 
-    // <<<--- ตำแหน่งที่ถูกต้องสำหรับการประกาศ struct และ mapping --->>>
-    struct PoolData {
-        uint256 questionId;
-        address[] participantsInWindow;
-        mapping(address => bool) hasParticipated;
-        bool isSettled;
-        uint256 totalRewardToMint;
-        uint256 totalFeeAmount;
+    mapping(address => uint256) public poolBalances; // ยอดเงินใน Pool ของแต่ละผู้เล่น
+
+    event Deposited(address indexed user, uint256 amount);
+    event Withdrew(address indexed user, uint256 amount);
+    event HintCostWithdrawn(address indexed user, uint256 amount, address indexed recipient);
+    event DeveloperFundAddressSet(address indexed _newAddress);
+
+    constructor(address _quizCoinAddress) {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender); // ผู้สร้างเป็น admin
+        quizCoin = IERC20(_quizCoinAddress); // Cast to IERC20
+        developerFundAddress = msg.sender; // ตั้งค่าเริ่มต้น
     }
 
-    mapping(uint256 => PoolData) public pools;
-    // <<<--- สิ้นสุดตำแหน่งที่ถูกต้อง --->>>
+    /// @notice Allows admin to set the developer fund address.
+    /// @param _newAddress The new address for the developer fund.
+    function setDeveloperFundAddress(address _newAddress) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_newAddress != address(0), "PoolManager: New address cannot be zero");
+        developerFundAddress = _newAddress;
+        emit DeveloperFundAddressSet(_newAddress);
+    }
 
+    /// @notice Players deposit QZC into their pool.
+    /// @param _amount Amount of QZC to deposit.
+    function deposit(uint256 _amount) public {
+        require(_amount > 0, "PoolManager: Deposit amount must be greater than zero");
+        // โอน QZC จากผู้เล่นเข้าสัญญา PoolManager - ต้องมีการ approve ก่อน
+        quizCoin.safeTransferFrom(msg.sender, address(this), _amount);
+        poolBalances[msg.sender] += _amount;
+        emit Deposited(msg.sender, _amount);
+    }
 
-    // Constants
-    uint256 public constant POOL_SOLVE_WINDOW_DURATION = 3 minutes;
-    uint256 public constant REWARD_FEE_PERCENTAGE_BPS = 50;
+    /// @notice Players withdraw QZC from their pool.
+    /// @param _amount Amount of QZC to withdraw.
+    function withdraw(uint256 _amount) public {
+        require(_amount > 0, "PoolManager: Withdraw amount must be greater than zero");
+        require(poolBalances[msg.sender] >= _amount, "PoolManager: Insufficient balance in pool");
+        poolBalances[msg.sender] -= _amount;
+        // โอน QZC จากสัญญา PoolManager ไปผู้เล่น
+        quizCoin.safeTransfer(msg.sender, _amount);
+        emit Withdrew(msg.sender, _amount);
+    }
 
-    event PoolAnswerSubmitted(uint256 indexed questionId, address indexed participant, bool indexed isInitiator);
-    event PoolSettled(uint256 indexed questionId, uint256 totalRewardMinted, address[] indexed winners);
-    event PoolFeeBurned(uint256 indexed questionId, uint256 feeAmount);
-
-    // แก้ไข constructor ให้รับ _quizGameAddress ด้วย
-    constructor(address _quizCoinAddress, address _quizGameAddress) {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(POOL_ADMIN_ROLE, msg.sender);
-        require(_quizCoinAddress != address(0), "PoolManager: Invalid QuizCoin address");
-        quizCoin = QuizCoin(_quizCoinAddress);
+    /// @notice Allows QuizGame contract (with GAME_ADMIN_ROLE_IN_POOL_MANAGER) to withdraw hint cost.
+    /// @param _from The address of the player to withdraw from.
+    /// @param _amount The amount of QZC to withdraw as hint cost.
+    function withdrawForHint(address _from, uint256 _amount) public onlyRole(GAME_ADMIN_ROLE_IN_POOL_MANAGER) {
+        require(_amount > 0, "PoolManager: Hint cost must be greater than zero");
+        require(poolBalances[_from] >= _amount, "PoolManager: Player has insufficient QZC in pool for hint");
         
-        require(_quizGameAddress != address(0), "PoolManager: Invalid QuizGame address");
-        quizGame = QuizGame(_quizGameAddress);
+        poolBalances[_from] -= _amount;
+        // โอนค่า Hint จาก PoolManager ไปยัง Developer Fund Address
+        // PoolManager ไม่ต้องมี Role ใน QuizCoin เพราะเป็น transfer จาก balance ของ PoolManager เอง
+        quizCoin.safeTransfer(developerFundAddress, _amount);
+        emit HintCostWithdrawn(_from, _amount, developerFundAddress);
     }
 
-    function supportsInterface(bytes4 interfaceId) public view override returns (bool) {
+    function supportsInterface(bytes4 interfaceId) public view override(AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
-    }
-
-    // ฟังก์ชัน setQuizGameAddress ถูกลบออกไปแล้วใน deploy.js เพราะเราตั้งค่าใน constructor แทน
-
-    function submitPoolAnswer(uint256 _questionId, bytes32 _userAnswerHash) public {
-        // แก้ไขการเรียก getter function ของ mapping public questions ใน QuizGame
-        (
-            bytes32 correctAnswerHash,
-            uint8 difficulty,
-            uint256 startTime,
-            bytes32 hintTextHash,
-            uint256 hintCost,
-            bool exists,
-            bool isSolved,
-            address solverAddress,
-            uint256 rewardMinted,
-            uint256 solvedTime,
-            bool isPoolInitiated,
-            uint256 poolInitiatedTime
-        ) = quizGame.questions(_questionId);
-
-        require(exists, "PoolManager: Question does not exist");
-        require(!isSolved, "PoolManager: Question already solved by Solo or settled Pool");
-        require(correctAnswerHash == _userAnswerHash, "PoolManager: Incorrect answer");
-
-        PoolData storage currentPool = pools[_questionId];
-
-        require(!currentPool.hasParticipated[msg.sender], "PoolManager: Already submitted correct answer to this pool");
-
-        if (!isPoolInitiated) {
-            quizGame.initiatePoolSolve(_questionId, msg.sender);
-            currentPool.participantsInWindow.push(msg.sender);
-            currentPool.hasParticipated[msg.sender] = true;
-            emit PoolAnswerSubmitted(_questionId, msg.sender, true);
-        } else {
-            require(block.timestamp <= poolInitiatedTime + POOL_SOLVE_WINDOW_DURATION, "PoolManager: Pool submission window closed");
-            currentPool.participantsInWindow.push(msg.sender);
-            currentPool.hasParticipated[msg.sender] = true;
-            emit PoolAnswerSubmitted(_questionId, msg.sender, false);
-        }
-    }
-
-    function settlePool(uint256 _questionId) public onlyRole(POOL_ADMIN_ROLE) {
-        // แก้ไขการเรียก getter function ของ mapping public questions ใน QuizGame
-        (
-            bytes32 correctAnswerHash, // ไม่ได้ใช้
-            uint8 difficulty,
-            uint256 startTime, // ไม่ได้ใช้
-            bytes32 hintTextHash, // ไม่ได้ใช้
-            uint256 hintCost, // ไม่ได้ใช้
-            bool exists,
-            bool isSolved,
-            address solverAddress, // ไม่ได้ใช้
-            uint256 rewardMinted, // ไม่ได้ใช้
-            uint256 solvedTime, // ไม่ได้ใช้
-            bool isPoolInitiated,
-            uint256 poolInitiatedTime
-        ) = quizGame.questions(_questionId);
-
-        PoolData storage currentPool = pools[_questionId];
-
-        require(exists, "PoolManager: Question does not exist");
-        require(!isSolved, "PoolManager: Question already solved");
-        require(isPoolInitiated, "PoolManager: Pool not initiated");
-        require(!currentPool.isSettled, "PoolManager: Pool already settled");
-
-        require(block.timestamp >= poolInitiatedTime + POOL_SOLVE_WINDOW_DURATION, "PoolManager: Pool window not yet closed");
-
-        address[] memory actualWinners = new address[](currentPool.participantsInWindow.length);
-        uint256 winnerCount = 0;
-
-        for (uint i = 0; i < currentPool.participantsInWindow.length; i++) {
-            address participant = currentPool.participantsInWindow[i];
-            actualWinners[winnerCount] = participant;
-            winnerCount++;
-        }
-        
-        address[] memory finalWinners = new address[](winnerCount);
-        for (uint i = 0; i < winnerCount; i++) {
-            finalWinners[i] = actualWinners[i];
-        }
-
-        uint256 totalRewardToMint = quizGame.calculateReward(difficulty);
-        uint256 totalFeeAmount = 0;
-
-        if (winnerCount > 0) {
-            uint256 rewardPerWinner = totalRewardToMint / winnerCount; // แก้ไข: ใช้ / แทน .div()
-            uint256 feePerWinner = rewardPerWinner * REWARD_FEE_PERCENTAGE_BPS / 10_000; // แก้ไข: ใช้ * แทน .mul()
-            uint256 netRewardPerWinner = rewardPerWinner - feePerWinner; // แก้ไข: ใช้ - แทน .sub()
-
-            totalFeeAmount = feePerWinner * winnerCount; // แก้ไข: ใช้ * แทน .mul()
-
-            for (uint i = 0; i < winnerCount; i++) {
-                if (finalWinners[i] != address(0)) {
-                    quizCoin.mint(finalWinners[i], netRewardPerWinner);
-                }
-            }
-            quizCoin.transfer(address(quizCoin), totalFeeAmount);
-            quizCoin.burn(totalFeeAmount);
-        }
-
-        currentPool.isSettled = true;
-        currentPool.totalRewardToMint = totalRewardToMint;
-        currentPool.totalFeeAmount = totalFeeAmount;
-
-        quizGame.settlePoolQuestion(_questionId, address(0), totalRewardToMint);
-
-        emit PoolSettled(_questionId, totalRewardToMint, finalWinners);
-        emit PoolFeeBurned(_questionId, totalFeeAmount);
     }
 }
