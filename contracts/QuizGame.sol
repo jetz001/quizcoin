@@ -6,21 +6,21 @@ import "./IQuizCoin.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./PoolManager.sol";
 
-contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable {
+contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
     IQuizCoin public quizCoin;
     PoolManager public poolManager; 
 
     // Constants
-    uint256 public GAME_START_TIMESTAMP; // Changed to dynamic, set in initialize
-    uint256 public constant HALVING_PERIOD = 365 days; // 1 year for easier testing
+    uint256 public GAME_START_TIMESTAMP; 
+    uint256 public constant HALVING_PERIOD = 365 days; 
     uint256 public constant ANSWER_WINDOW_DURATION = 3 minutes;
     
-    // กำหนดค่าเหล่านี้เป็น public constant เพื่อให้ test เข้าถึงได้ง่าย
-    uint256 public constant BASE_REWARD_MULTIPLIER = 5000 * (10**18); // 5000 QZC in wei for base difficulty 99
-    uint256 public constant MAX_REWARD_FOR_100_DIFFICULTY = 10000 * (10**18); // 10000 QZC in wei for difficulty 100
-    uint256 public constant HINT_COST_AMOUNT = 10 * (10**18); // 10 QZC in wei
+    uint256 public constant BASE_REWARD_MULTIPLIER = 5000 * (10**18); 
+    uint256 public constant MAX_REWARD_FOR_100_DIFFICULTY = 10000 * (10**18); 
+    uint256 public constant HINT_COST_AMOUNT = 10 * (10**18); 
 
     bytes32 public constant REWARD_DISTRIBUTOR_ROLE = keccak256("REWARD_DISTRIBUTOR_ROLE");
 
@@ -32,8 +32,8 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         address questionCreator;
         bool isClosed;
         uint256 answerWindowStartTime;
-        address[] correctAnswersInWindow; // ใช้เก็บ address ของผู้ที่ตอบถูกใน window
-        mapping(address => bool) hasAnsweredInWindow; // ใช้เช็คว่า address นี้ตอบไปแล้วหรือยัง
+        address[] correctAnswersInWindow; 
+        mapping(address => bool) hasAnsweredInWindow; 
     }
 
     mapping(uint256 => Question) public questions;
@@ -52,32 +52,27 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         _disableInitializers();
     }
 
-    /**
-     * @notice Initializes the QuizGame contract.
-     * @param _quizCoinAddress The address of the QuizCoin token contract.
-     * @param _poolManagerAddress The address of the PoolManager contract.
-     * @param _defaultAdmin The address to be granted the DEFAULT_ADMIN_ROLE and REWARD_DISTRIBUTOR_ROLE.
-     * @param _gameStartTimestamp The timestamp when the game officially starts for halving calculation.
-     */
     function initialize(address _quizCoinAddress, address _poolManagerAddress, address _defaultAdmin, uint256 _gameStartTimestamp) public initializer {
         __AccessControl_init();
         __ReentrancyGuard_init();
+        __UUPSUpgradeable_init(); 
 
         quizCoin = IQuizCoin(_quizCoinAddress);
         poolManager = PoolManager(_poolManagerAddress);
         nextQuestionId = 1;
-        GAME_START_TIMESTAMP = _gameStartTimestamp; // Set dynamically
+        GAME_START_TIMESTAMP = _gameStartTimestamp; 
 
         _grantRole(DEFAULT_ADMIN_ROLE, _defaultAdmin);
         _grantRole(REWARD_DISTRIBUTOR_ROLE, _defaultAdmin);
     }
 
-    /**
-     * @dev สร้างคำถามใหม่
-     * @param _correctAnswerHash Hash ของคำตอบที่ถูกต้อง
-     * @param _hintHash Hash ของ Hint ที่เกี่ยวข้อง
-     * @param _difficultyLevel ระดับความยากของคำถาม (1-100)
-     */
+    function setPoolManagerAddress(address _poolManagerAddress) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_poolManagerAddress != address(0), "QuizGame: PoolManager address cannot be zero.");
+        poolManager = PoolManager(_poolManagerAddress);
+    }
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
+
     function createQuestion(bytes32 _correctAnswerHash, bytes32 _hintHash, uint256 _difficultyLevel)
         public
     {
@@ -96,7 +91,7 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         
         require(calculatedReward > 0, "Quiz: Calculated reward is zero. Halving may have reduced it too much.");
 
-        uint256 currentQuestionId = nextQuestionId++; // Use a local variable then increment
+        uint256 currentQuestionId = nextQuestionId++; 
         Question storage newQuestion = questions[currentQuestionId]; 
         
         newQuestion.correctAnswerHash = _correctAnswerHash;
@@ -110,12 +105,6 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         emit QuestionCreated(currentQuestionId, msg.sender, _difficultyLevel, calculatedReward);
     }
 
-    /**
-     * @dev ผู้เล่นส่งคำตอบสำหรับคำถาม
-     * จะบันทึกผู้ตอบถูกและเริ่มนับเวลา หากเป็นคนแรกที่ตอบถูกในรอบนั้น
-     * @param _questionId ID ของคำถาม
-     * @param _answerHash Hash ของคำตอบที่ผู้เล่นส่งมา
-     */
     function submitAnswer(uint256 _questionId, bytes32 _answerHash) public nonReentrant {
         Question storage question = questions[_questionId];
 
@@ -139,10 +128,6 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         emit AnswerSubmitted(_questionId, msg.sender, _answerHash);
     }
 
-    /**
-     * @dev อนุญาตให้ผู้เล่นซื้อ Hint สำหรับคำถาม
-     * @param _questionId ID ของคำถาม
-     */
     function purchaseHint(uint256 _questionId) public nonReentrant {
         Question storage question = questions[_questionId];
 
@@ -154,22 +139,12 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         emit HintPurchased(_questionId, msg.sender, HINT_COST_AMOUNT);
     }
 
-    /**
-     * @dev ผู้เล่นสามารถรับ Hint ได้หลังจากซื้อไปแล้ว
-     * @param _questionId ID ของคำถาม
-     * @return bytes32 Hash ของ Hint
-     */
     function getHint(uint256 _questionId) public view returns (bytes32) {
         Question storage question = questions[_questionId];
         require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
         return question.hintHash;
     }
 
-    /**
-     * @dev ฟังก์ชันสำหรับกระจายรางวัลให้กับผู้ที่ตอบถูกภายใน Window เวลา
-     * ต้องถูกเรียกโดย REWARD_DISTRIBUTOR_ROLE (เช่น Chainlink Keeper หรือ Bot)
-     * @param _questionId ID ของคำถามที่จะกระจายรางวัล
-     */
     function distributeRewards(uint256 _questionId) public onlyRole(REWARD_DISTRIBUTOR_ROLE) nonReentrant {
         Question storage question = questions[_questionId];
 
@@ -195,26 +170,15 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         }
 
         question.isClosed = true;
-        // ล้าง array correctAnswersInWindow หลังจากกระจายรางวัลแล้ว
-        delete question.correctAnswersInWindow; // <-- เพิ่มบรรทัดนี้เพื่อแก้ไขปัญหา numCorrectAnswerers ใน test
+        delete question.correctAnswersInWindow; 
         
         emit QuestionClosed(_questionId); 
     }
 
-    /**
-     * @dev คำนวณ Base Reward ตามระดับความยาก (1-99)
-     * @param _difficulty ระดับความยาก (1-99)
-     * @return จำนวน Base Reward (ในหน่วย wei)
-     */
     function _getBaseRewardByDifficulty(uint256 _difficulty) internal pure returns (uint256) {
         return (BASE_REWARD_MULTIPLIER * _difficulty) / 99;
     }
 
-    /**
-     * @dev คำนวณ Halving Factor ตามเวลาที่ผ่านไปจาก GAME_START_TIMESTAMP
-     * Factor จะเพิ่มขึ้นเป็น 2, 4, 8... ทุก HALVING_PERIOD (เช่น 4 ปี)
-     * @return Halving Factor (เช่น 1, 2, 4, 8...)
-     */
     function _getHalvingFactor() internal view returns (uint256) {
         if (block.timestamp < GAME_START_TIMESTAMP) {
             return 1; 
@@ -224,19 +188,11 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         return (1 << periodsSinceStart); 
     }
 
-    /**
-     * @dev Getter function เพื่อตรวจสอบว่าผู้ใช้ได้ตอบคำถามใน window ปัจจุบันแล้วหรือยัง
-     * @param _questionId ID ของคำถาม
-     * @param _user ที่อยู่ของผู้ใช้
-     * @return bool True ถ้าผู้ใช้ได้ตอบไปแล้ว False ถ้ายัง
-     */
     function getHasAnsweredInWindow(uint256 _questionId, address _user) public view returns (bool) {
-        // ตรวจสอบว่าคำถามมีอยู่จริงก่อน
         require(questions[_questionId].correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
         return questions[_questionId].hasAnsweredInWindow[_user];
     }
 
-    // ฟังก์ชันเพิ่มเติมสำหรับ Debugging หรือข้อมูล
     function getQuestionDetails(uint256 _questionId) public view returns (
         bytes32 correctAnswerHash,
         bytes32 hintHash,
@@ -245,12 +201,12 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         address questionCreator,
         bool isClosed,
         uint256 answerWindowStartTime,
-        uint256 numCorrectAnswerers, // จำนวนคนตอบถูก
+        uint256 numCorrectAnswerers, 
         bool isRewardWindowActive,
         uint256 rewardWindowEndTime
     ) {
         Question storage q = questions[_questionId];
-        require(q.correctAnswerHash != bytes32(0), "Quiz: Question does not exist."); // ตรวจสอบว่าคำถามมีอยู่จริง
+        require(q.correctAnswerHash != bytes32(0), "Quiz: Question does not exist."); 
 
         correctAnswerHash = q.correctAnswerHash;
         hintHash = q.hintHash;
@@ -259,9 +215,8 @@ contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpg
         questionCreator = q.questionCreator;
         isClosed = q.isClosed;
         answerWindowStartTime = q.answerWindowStartTime;
-        numCorrectAnswerers = q.correctAnswersInWindow.length; // ดึงจาก length ของ array
+        numCorrectAnswerers = q.correctAnswersInWindow.length; 
         
-        // ตรวจสอบว่า reward window ยัง active หรือไม่
         isRewardWindowActive = (q.answerWindowStartTime != 0 && block.timestamp <= q.answerWindowStartTime + ANSWER_WINDOW_DURATION && !q.isClosed);
         rewardWindowEndTime = (q.answerWindowStartTime != 0) ? (q.answerWindowStartTime + ANSWER_WINDOW_DURATION) : 0;
     }

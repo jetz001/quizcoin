@@ -2,109 +2,101 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./IQuizCoin.sol"; // ตรวจสอบว่ามี IQuizCoin.sol อยู่ในโฟลเดอร์เดียวกันหรือเปล่า
 
-/// @custom:security-contact security@example.com
-contract PoolManager is Initializable, OwnableUpgradeable, AccessControlUpgradeable, UUPSUpgradeable {
-    bytes32 public constant POOL_MANAGER_ROLE = keccak256("POOL_MANAGER_ROLE");
+contract PoolManager is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
+    IQuizCoin public quizCoin;
+    address public quizGameAddress; // เก็บ address ของ QuizGame
+    address public developerFundAddress; // ที่อยู่สำหรับ Developer Fund
 
-    // Address ของ QuizCoin token
-    IERC20 private s_quizCoin; 
-
-    // Address ของ QuizGame contract ที่ได้รับอนุญาตให้โต้ตอบกับ PoolManager
-    address public i_quizGameAddress; 
-
-    // Events
-    event Deposited(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
-    event QuizGameAddressUpdated(address oldAddress, address newAddress);
-
+    // กำหนดบทบาทสำหรับ Admin ของ Game ที่สามารถสั่งถอนเงินจาก Pool ได้
+    bytes32 public constant GAME_ADMIN_ROLE_IN_POOL_MANAGER = keccak256("GAME_ADMIN_ROLE_IN_POOL_MANAGER"); // <--- เพิ่มบรรทัดนี้
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    function initialize(address _quizCoinAddress, address _initialOwner, address _defaultAdmin) public initializer {
-        __Ownable_init(_initialOwner);
-        __AccessControl_init(); 
-        _grantRole(DEFAULT_ADMIN_ROLE, _defaultAdmin); 
-        _grantRole(DEFAULT_ADMIN_ROLE, _initialOwner); 
-        _grantRole(POOL_MANAGER_ROLE, _initialOwner); // Grant initial owner the POOL_MANAGER_ROLE initially
-
-        require(_quizCoinAddress != address(0), "QuizCoin address cannot be zero");
-        s_quizCoin = IERC20(_quizCoinAddress);
-    }
-
-    // Public getter function for s_quizCoin
-    function quizCoin() public view returns (address) {
-        return address(s_quizCoin);
-    }
-
     /**
-     * @notice ฟังก์ชันนี้ใช้สำหรับตั้งค่า address ของ QuizGame Contract
-     * มีเพียงเจ้าของสัญญาเท่านั้นที่สามารถเรียกฟังก์ชันนี้ได้
+     * @notice Initializes the PoolManager contract.
+     * @param _quizCoinAddress The address of the QuizCoin token contract.
+     * @param _defaultAdmin The address to be granted the DEFAULT_ADMIN_ROLE and GAME_ADMIN_ROLE_IN_POOL_MANAGER.
      * @param _quizGameAddress The address of the QuizGame contract.
      */
-    function setQuizGameAddress(address _quizGameAddress) public onlyOwner {
-        require(_quizGameAddress != address(0), "QuizGame address cannot be zero");
-        
-        // Revoke POOL_MANAGER_ROLE from old QuizGame address if it was set
-        if (i_quizGameAddress != address(0)) {
-            _revokeRole(POOL_MANAGER_ROLE, i_quizGameAddress);
-        }
-        
-        emit QuizGameAddressUpdated(i_quizGameAddress, _quizGameAddress);
-        i_quizGameAddress = _quizGameAddress;
-        
-        // Grant POOL_MANAGER_ROLE to the new QuizGame address
-        _grantRole(POOL_MANAGER_ROLE, _quizGameAddress);
+    function initialize(address _quizCoinAddress, address _defaultAdmin, address _quizGameAddress) public initializer {
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+
+        quizCoin = IQuizCoin(_quizCoinAddress);
+        quizGameAddress = _quizGameAddress; // ตั้งค่า QuizGame address ใน initialize
+
+        _grantRole(DEFAULT_ADMIN_ROLE, _defaultAdmin);
+        // ให้ DEFAULT_ADMIN_ROLE มีสิทธิ์ GAME_ADMIN_ROLE_IN_POOL_MANAGER ด้วย
+        _grantRole(GAME_ADMIN_ROLE_IN_POOL_MANAGER, _defaultAdmin); // <--- เพิ่มบรรทัดนี้ หรือจะให้เฉพาะ _quizGameAddress อย่างเดียวก็ได้
     }
 
     /**
-     * @notice ฟังก์ชันรับฝาก QuizCoin จากผู้เล่นเข้าสู่ Pool
-     * ผู้ส่ง (msg.sender) ต้องทำการ approve PoolManager ก่อนเรียกฟังก์ชันนี้
-     * @param _amount จำนวน QuizCoin ที่ต้องการฝาก
+     * @dev Required for UUPS upgradeability.
+     * Only the DEFAULT_ADMIN_ROLE can authorize upgrades.
      */
-    function deposit(uint256 _amount) external {
-        require(_amount > 0, "Amount must be greater than zero");
-        require(s_quizCoin.transferFrom(msg.sender, address(this), _amount), "Pool: Deposit transfer failed.");
-        emit Deposited(msg.sender, _amount);
-    }
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /**
-     * @notice ฟังก์ชันสำหรับเบิก QuizCoin ออกจาก Pool ให้กับผู้ใช้
-     * ฟังก์ชันนี้มีเพียง Contract ที่มี POOL_MANAGER_ROLE เท่านั้นที่สามารถเรียกได้
-     * (ในกรณีนี้คือ QuizGame contract)
-     * @param _user The address of the user to withdraw for.
-     * @param _amount The amount of QuizCoin to withdraw.
+     * @dev รับโทเคน QZC เข้าสู่ Pool
+     * ต้องถูกเรียกโดยสัญญา QuizCoin ผ่าน transferFrom
+     * เพื่อรับโทเคนที่ผู้ใช้จ่ายมา (เช่น ค่า Hint)
      */
-    function withdrawForUser(address _user, uint256 _amount) external onlyRole(POOL_MANAGER_ROLE) {
-        // ตรวจสอบว่าผู้เรียกคือ i_quizGameAddress (เสริมความปลอดภัย)
-        require(msg.sender == i_quizGameAddress, "Pool: Caller must be the authorized QuizGame contract.");
-        require(_amount > 0, "Amount must be greater than zero");
-        require(s_quizCoin.balanceOf(address(this)) >= _amount, "Pool: Insufficient balance for withdrawal.");
-        
-        require(s_quizCoin.transfer(_user, _amount), "Pool: Withdrawal transfer failed.");
-        emit Withdrawn(_user, _amount);
+    function receiveTokens(uint256 amount) external {
+        // ต้องตรวจสอบให้แน่ใจว่าฟังก์ชันนี้ถูกเรียกโดย QuizCoin หรือ QuizGame เท่านั้น
+        // ขึ้นอยู่กับ logic การไหลของ token ของคุณ
+        // ตัวอย่างเช่น อาจจะใช้ onlyRole(MINTER_ROLE_OF_POOLMANAGER) หรือ onlyQuizCoin/onlyQuizGame
+        // แต่ถ้า QuizCoin มีการอนุญาต (approve) และ transferFrom มาที่ PoolManager โดยตรง
+        // ก็ไม่จำเป็นต้องมี require(msg.sender == address(quizCoin), "...");
+        // require(msg.sender == address(quizCoin), "PoolManager: Only QuizCoin can send tokens here.");
+        // require(quizCoin.transferFrom(msg.sender, address(this), amount), "PoolManager: QZC transfer failed.");
+        // โทเคนจะเข้ามาในสัญญาโดยตรงผ่าน transferFrom ของ ERC20
     }
 
     /**
-     * @notice ตรวจสอบยอดคงเหลือของ QuizCoin ใน PoolManager
+     * @dev ถอนโทเคน QZC ออกจาก Pool เพื่อจ่ายรางวัล หรือค่าใช้จ่าย
+     * เฉพาะผู้ที่มี GAME_ADMIN_ROLE_IN_POOL_MANAGER หรือ ADMIN เท่านั้นที่สามารถเรียกได้
+     * @param recipient ผู้รับโทเคน
+     * @param amount จำนวนโทเคนที่จะถอน
+     */
+    function withdrawForUser(address recipient, uint256 amount) public onlyRole(GAME_ADMIN_ROLE_IN_POOL_MANAGER) nonReentrant {
+        require(quizCoin.balanceOf(address(this)) >= amount, "PoolManager: Insufficient pool balance.");
+        require(quizCoin.transfer(recipient, amount), "PoolManager: QZC withdrawal failed.");
+    }
+
+    /**
+     * @dev ตั้งค่าที่อยู่ Developer Fund (เฉพาะ ADMIN เท่านั้นที่เรียกได้)
+     * @param _developerFundAddress Address ของ Developer Fund
+     */
+    function setDeveloperFundAddress(address _developerFundAddress) public onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_developerFundAddress != address(0), "PoolManager: Developer fund address cannot be zero.");
+        developerFundAddress = _developerFundAddress;
+    }
+
+    /**
+     * @dev ถอนเงินสำหรับ Developer Fund (เฉพาะ ADMIN เท่านั้นที่เรียกได้)
+     * @param amount จำนวนโทเคนที่จะถอน
+     */
+    function withdrawToDeveloperFund(uint256 amount) public onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
+        require(developerFundAddress != address(0), "PoolManager: Developer fund address not set.");
+        require(quizCoin.balanceOf(address(this)) >= amount, "PoolManager: Insufficient pool balance for dev fund.");
+        require(quizCoin.transfer(developerFundAddress, amount), "PoolManager: QZC transfer to dev fund failed.");
+    }
+
+    /**
+     * @dev ตรวจสอบยอดคงเหลือของ QZC ใน Pool
+     * @return จำนวนโทเคน QZC ใน Pool
      */
     function getPoolBalance() public view returns (uint256) {
-        return s_quizCoin.balanceOf(address(this));
+        return quizCoin.balanceOf(address(this));
     }
-
-    /**
-     * @notice เพื่อให้ PoolManager สามารถอัปเกรดได้ มีเพียงเจ้าของเท่านั้นที่สามารถเรียกได้
-     */
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
-
-    // *** ลบทั้ง fallback() และ receive() function ออกไปเลย ***
-    // สัญญาจะปฏิเสธการรับ Ether โดยอัตโนมัติและคืนเงินให้ผู้ส่ง
 }
