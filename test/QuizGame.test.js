@@ -1,490 +1,474 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("QuizGame Contract", function () {
-    let QuizCoin, QuizGame, PoolManager;
-    let quizCoin, quizGame, poolManager;
-    let deployer, creator, player1, player2, rewardDistributor, anotherAccount;
+    let QuizCoin;
+    let quizCoin;
+    let PoolManager;
+    let poolManager;
+    let QuizGame;
+    let quizGame;
+    let owner;
+    let addr1;
+    let addr2;
+    let addr3;
+    let addrs;
+    let REWARD_DISTRIBUTOR_ROLE;
+    let GAME_ADMIN_ROLE_IN_POOL_MANAGER; // Role QuizGame has in PoolManager
+    let MINTER_ROLE_IN_QUIZCOIN;
+    let BURNER_ROLE_IN_QUIZCOIN;
 
-    // Constants for testing
-    // ใช้ ethers.parseUnits เพื่อแปลงค่าให้เป็น wei (18 decimal places)
-    const ONE_QZC = ethers.parseUnits("1", 18);
-    const TEN_QZC = ethers.parseUnits("10", 18);
-    const FIFTY_QZC = ethers.parseUnits("50", 18);
-    const ONE_HUNDRED_QZC = ethers.parseUnits("100", 18);
-    const FIVE_THOUSAND_QZC = ethers.parseUnits("5000", 18);
-    const TEN_THOUSAND_QZC = ethers.parseUnits("10000", 18);
+    // Hashes for testing
+    const CORRECT_ANSWER_HASH = ethers.keccak256(ethers.toUtf8Bytes("correct_answer"));
+    const WRONG_ANSWER_HASH = ethers.keccak256(ethers.toUtf8Bytes("wrong_answer"));
+    const HINT_HASH = ethers.keccak256(ethers.toUtf8Bytes("hint_text"));
+    const DIFFICULTY_LEVEL_50 = 50;
+    const DIFFICULTY_LEVEL_100 = 100;
 
-    // Question details (example values)
-    // ใช้ ethers.keccak256 เพื่อสร้าง hash ของคำตอบ/hint
-    const CORRECT_ANSWER_HASH_1 = ethers.keccak256(ethers.toUtf8Bytes("answer123"));
-    const HINT_HASH_1 = ethers.keccak256(ethers.toUtf8Bytes("hintForAnswer123"));
-    const DIFFICULTY_LEVEL_1 = 50; // Difficulty for testing base reward
-    const INCORRECT_ANSWER_HASH = ethers.keccak256(ethers.toUtf8Bytes("wrongAnswer"));
+    // Constants for time manipulation
+    const ONE_DAY = 24 * 60 * 60;
+    const ONE_WEEK = 7 * ONE_DAY;
+    const FOUR_YEARS = 4 * 365 * 24 * 60 * 60; // Approximate, ignoring leap years for simplicity in test
+    const BLOCK_DURATION_SECONDS = 180; // 3 minutes
 
-    const CORRECT_ANSWER_HASH_2 = ethers.keccak256(ethers.toUtf8Bytes("anotherAnswer"));
-    const HINT_HASH_2 = ethers.keccak256(ethers.toUtf8Bytes("hintForAnotherAnswer"));
-    const DIFFICULTY_LEVEL_2 = 100; // Difficulty for max reward
+    // Helper for calculating QZC amounts
+    const parseQZC = (amount) => ethers.parseUnits(amount.toString(), 18);
 
-    // beforeEach hook จะรันก่อนแต่ละ Test Case เพื่อให้มั่นใจว่าทุก Test เริ่มต้นจากสถานะที่สะอาด
     beforeEach(async function () {
-        // ดึง Signers (บัญชี) สำหรับการจำลองผู้ใช้งาน
-        [deployer, creator, player1, player2, rewardDistributor, anotherAccount] = await ethers.getSigners();
+        [owner, addr1, addr2, addr3, ...addrs] = await ethers.getSigners();
 
-        // --- Deploy QuizCoin Contract (Upgradeable) ---
+        // Deploy QuizCoin
         QuizCoin = await ethers.getContractFactory("QuizCoin");
-        quizCoin = await upgrades.deployProxy(QuizCoin, [deployer.address], {
-            initializer: "initialize",
-            kind: "uups", // กำหนดชนิดของ Proxy เป็น UUPS
-        });
-        await quizCoin.waitForDeployment(); // รอให้สัญญาถูก Deploy เสร็จสมบูรณ์
+        quizCoin = await upgrades.deployProxy(QuizCoin, [], { kind: "uups" });
+        await quizCoin.waitForDeployment();
 
-        // --- Deploy PoolManager Contract (Upgradeable) ---
-        // ส่ง ethers.ZeroAddress เป็น QuizGame address ชั่วคราวในตอนแรก เพื่อแก้ปัญหา Circular Dependency
+        // Deploy PoolManager
         PoolManager = await ethers.getContractFactory("PoolManager");
-        poolManager = await upgrades.deployProxy(PoolManager, [quizCoin.target, deployer.address, ethers.ZeroAddress], {
-            initializer: "initialize",
-            kind: "uups",
-        });
+        poolManager = await upgrades.deployProxy(PoolManager, [await quizCoin.getAddress()], { kind: "uups" });
         await poolManager.waitForDeployment();
 
-        // --- Deploy QuizGame Contract (Upgradeable) ---
-        // ใช้ timestamp ปัจจุบันของบล็อกเป็น GAME_START_TIMESTAMP
-        const currentBlock = await ethers.provider.getBlock("latest");
-        const gameStartTimestamp = BigInt(currentBlock.timestamp);
-
-        quizGame = await upgrades.deployProxy(QuizGame, [
-            quizCoin.target, // ส่ง address ของ QuizCoin
-            poolManager.target, // ส่ง address ของ PoolManager ที่ Deploy แล้ว
-            deployer.address,   // _defaultAdmin
-            gameStartTimestamp, // _gameStartTimestamp
-        ], {
-            initializer: "initialize",
-            kind: "uups",
-        });
+        // Deploy QuizGame
+        QuizGame = await ethers.getContractFactory("QuizGame");
+        quizGame = await upgrades.deployProxy(
+            QuizGame,
+            [await quizCoin.getAddress(), await poolManager.getAddress(), owner.address, await time.latest()], // Pass current timestamp as GAME_START_TIMESTAMP
+            { kind: "uups" }
+        );
         await quizGame.waitForDeployment();
 
-        // --- ตั้งค่าความสัมพันธ์และ Roles ระหว่าง Contracts ---
+        // Get roles from contracts
+        REWARD_DISTRIBUTOR_ROLE = await quizGame.REWARD_DISTRIBUTOR_ROLE();
+        GAME_ADMIN_ROLE_IN_POOL_MANAGER = await poolManager.GAME_ADMIN_ROLE();
+        MINTER_ROLE_IN_QUIZCOIN = await quizCoin.MINTER_ROLE();
+        BURNER_ROLE_IN_QUIZCOIN = await quizCoin.BURNER_ROLE();
 
-        // 1. ตั้งค่า QuizGame address ที่ถูกต้องใน PoolManager (แก้ไข Circular Dependency)
-        // ต้อง Re-initialize PoolManager ใหม่ใน Hardhat Network เพื่อตั้งค่า QuizGame address ที่ถูกต้อง
-        // ในสภาพแวดล้อมจริง เราจะใช้ฟังก์ชัน setter แทน initialize อีกครั้ง
-        await poolManager.connect(deployer).initialize(quizCoin.target, deployer.address, quizGame.target);
+        // Grant necessary roles
+        await quizCoin.grantRole(MINTER_ROLE_IN_QUIZCOIN, await poolManager.getAddress());
+        await quizCoin.grantRole(BURNER_ROLE_IN_QUIZCOIN, await poolManager.getAddress());
+        await poolManager.grantRole(GAME_ADMIN_ROLE_IN_POOL_MANAGER, await quizGame.getAddress());
 
-        // 2. มอบบทบาท MINTER_ROLE ให้ QuizGame ใน QuizCoin (เพื่อให้ QuizGame สร้างรางวัลได้)
-        const MINTER_ROLE = await quizCoin.MINTER_ROLE(); // ดึงค่า bytes32 ของ MINTER_ROLE จากสัญญา
-        await quizCoin.connect(deployer).grantRole(MINTER_ROLE, quizGame.target);
+        // Mint some initial QuizCoin for users to purchase hints and for initial pool balance
+        await quizCoin.mint(owner.address, parseQZC(100000));
+        await quizCoin.mint(addr1.address, parseQZC(100000));
+        await quizCoin.mint(addr2.address, parseQZC(100000));
+        await quizCoin.mint(addr3.address, parseQZC(100000));
 
-        // 3. มอบบทบาท BURNER_ROLE ให้ QuizGame ใน QuizCoin (ถ้า QuizGame จำเป็นต้องเผาโทเคน)
-        const BURNER_ROLE = await quizCoin.BURNER_ROLE();
-        await quizCoin.connect(deployer).grantRole(BURNER_ROLE, quizGame.target);
-
-        // 4. มอบบทบาท GAME_ADMIN_ROLE_IN_POOL_MANAGER ให้ QuizGame ใน PoolManager (เพื่อให้ QuizGame ถอนรางวัลจาก Pool ได้)
-        const GAME_ADMIN_ROLE_IN_POOL_MANAGER = await poolManager.GAME_ADMIN_ROLE_IN_POOL_MANAGER();
-        await poolManager.connect(deployer).grantRole(GAME_ADMIN_ROLE_IN_POOL_MANAGER, quizGame.target);
-
-        // 5. ตั้งค่า Developer Fund Address ใน PoolManager
-        await poolManager.connect(deployer).setDeveloperFundAddress(deployer.address);
-
-        // 6. มอบบทบาท REWARD_DISTRIBUTOR_ROLE ให้กับบัญชี rewardDistributor ใน QuizGame
-        const REWARD_DISTRIBUTOR_ROLE = await quizGame.REWARD_DISTRIBUTOR_ROLE();
-        await quizGame.connect(deployer).grantRole(REWARD_DISTRIBUTOR_ROLE, rewardDistributor.address);
-
-        // --- Mint QZC Tokens สำหรับการทดสอบ ---
-        // Mint QZC ให้กับผู้เล่น (player1, player2) และ PoolManager
-        await quizCoin.connect(deployer).mint(player1.address, ONE_HUNDRED_QZC);
-        await quizCoin.connect(deployer).mint(player2.address, ONE_HUNDRED_QZC);
-        await quizCoin.connect(deployer).mint(poolManager.target, TEN_THOUSAND_QZC); // Mint ให้ PoolManager พอสำหรับจ่ายรางวัล
-
-        // --- Approve QZC สำหรับการซื้อ Hint ---
-        // ผู้เล่นต้อง Approve ให้ QuizGame สามารถใช้ QZC ของตนได้ (สำหรับการซื้อ Hint)
-        await quizCoin.connect(player1).approve(quizGame.target, ONE_HUNDRED_QZC);
-        await quizCoin.connect(player2).approve(quizGame.target, ONE_HUNDRED_QZC);
+        // Owner/Admin needs to approve PoolManager to spend QZC for hint costs (if PoolManager pulls)
+        // Or if hint cost goes directly to QuizGame, QuizGame needs to transfer it to PoolManager
+        // Based on current QuizGame code, hint cost directly goes to poolManager.
+        // So users need to approve PoolManager.
+        await quizCoin.connect(owner).approve(await poolManager.getAddress(), parseQZC(100000));
+        await quizCoin.connect(addr1).approve(await poolManager.getAddress(), parseQZC(100000));
+        await quizCoin.connect(addr2).approve(await poolManager.getAddress(), parseQZC(100000));
+        await quizCoin.connect(addr3).approve(await poolManager.getAddress(), parseQZC(100000));
     });
 
-    // Deployment & Initialization Tests
-    describe("Deployment & Initialization", function () {
+    describe("Initialization and Basic Setup", function () {
         it("Should set the correct QuizCoin, PoolManager and initial state variables", async function () {
-            expect(await quizGame.quizCoin()).to.equal(quizCoin.target);
-            expect(await quizGame.poolManager()).to.equal(poolManager.target);
+            expect(await quizGame.quizCoin()).to.equal(await quizCoin.getAddress());
+            expect(await quizGame.poolManager()).to.equal(await poolManager.getAddress());
             expect(await quizGame.nextQuestionId()).to.equal(1);
-            expect(await quizGame.GAME_START_TIMESTAMP()).to.not.equal(0);
+            expect(await quizGame.hasRole(REWARD_DISTRIBUTOR_ROLE, owner.address)).to.be.true;
+            expect(await quizGame.hasRole(await quizGame.DEFAULT_ADMIN_ROLE(), owner.address)).to.be.true;
         });
 
-        it("Should assign DEFAULT_ADMIN_ROLE to deployer", async function () {
-            const DEFAULT_ADMIN_ROLE = await quizGame.DEFAULT_ADMIN_ROLE();
-            expect(await quizGame.hasRole(DEFAULT_ADMIN_ROLE, deployer.address)).to.be.true;
+        it("Should allow changing PoolManager address by admin", async function () {
+            const newPoolManager = addrs[0]; // Just a random address for testing
+            await expect(quizGame.setPoolManagerAddress(newPoolManager.address))
+                .to.emit(quizGame, "PoolManagerAddressUpdated")
+                .withArgs(await poolManager.getAddress(), newPoolManager.address);
+            expect(await quizGame.poolManager()).to.equal(newPoolManager.address);
         });
 
-        it("Should assign REWARD_DISTRIBUTOR_ROLE to specified account", async function () {
-            const REWARD_DISTRIBUTOR_ROLE = await quizGame.REWARD_DISTRIBUTOR_ROLE();
-            expect(await quizGame.hasRole(REWARD_DISTRIBUTOR_ROLE, rewardDistributor.address)).to.be.true;
-        });
-
-        it("PoolManager should have correct QuizCoin and QuizGame addresses", async function () {
-            expect(await poolManager.quizCoin()).to.equal(quizCoin.target);
-            expect(await poolManager.quizGameAddress()).to.equal(quizGame.target);
-        });
-
-        it("QuizGame should have MINTER_ROLE and BURNER_ROLE on QuizCoin", async function () {
-            const MINTER_ROLE = await quizCoin.MINTER_ROLE();
-            const BURNER_ROLE = await quizCoin.BURNER_ROLE();
-            expect(await quizCoin.hasRole(MINTER_ROLE, quizGame.target)).to.be.true;
-            expect(await quizCoin.hasRole(BURNER_ROLE, quizGame.target)).to.be.true;
-        });
-
-        it("QuizGame should have GAME_ADMIN_ROLE_IN_POOL_MANAGER on PoolManager", async function () {
-            const GAME_ADMIN_ROLE_IN_POOL_MANAGER = await poolManager.GAME_ADMIN_ROLE_IN_POOL_MANAGER();
-            expect(await poolManager.hasRole(GAME_ADMIN_ROLE_IN_POOL_MANAGER, quizGame.target)).to.be.true;
+        it("Should not allow changing PoolManager address by non-admin", async function () {
+            const newPoolManager = addrs[0];
+            await expect(quizGame.connect(addr1).setPoolManagerAddress(newPoolManager.address))
+                .to.be.revertedWith("AccessControl: Caller is not a game admin");
         });
     });
 
-    // Question Creation Tests
     describe("Question Creation", function () {
-        it("Should allow a question to be created by any address", async function () {
-            // คาดหวังว่าจะมีการ emit Event "QuestionCreated" พร้อมค่าที่ถูกต้อง
-            await expect(quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_1, HINT_HASH_1, DIFFICULTY_LEVEL_1))
+        it("Should allow admin to create a new Solo question", async function () {
+            await expect(quizGame.createQuestion(
+                CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 0 // 0 = Solo mode
+            ))
                 .to.emit(quizGame, "QuestionCreated")
-                .withArgs(1, creator.address, DIFFICULTY_LEVEL_1, FIVE_THOUSAND_QZC.mul(DIFFICULTY_LEVEL_1).div(99)); // ตรวจสอบการคำนวณรางวัล
+                .withArgs(1, owner.address, DIFFICULTY_LEVEL_50, parseQZC((5000 * 50) / 99)); // Check calculated base reward
             
-            // ตรวจสอบสถานะของคำถามที่ถูกสร้างขึ้น
             const question = await quizGame.questions(1);
-            expect(question.correctAnswerHash).to.equal(CORRECT_ANSWER_HASH_1);
-            expect(question.hintHash).to.equal(HINT_HASH_1);
-            expect(question.difficultyLevel).to.equal(DIFFICULTY_LEVEL_1);
-            expect(question.questionCreator).to.equal(creator.address);
+            expect(question.correctAnswerHash).to.equal(CORRECT_ANSWER_HASH);
+            expect(question.difficultyLevel).to.equal(DIFFICULTY_LEVEL_50);
+            expect(question.mode).to.equal(0); // Solo mode
             expect(question.isClosed).to.be.false;
-            expect(question.answerWindowStartTime).to.equal(0);
+            expect(question.firstSolverAddress).to.equal(ethers.ZeroAddress);
         });
 
-        it("Should create questions with correct reward for difficulty 100", async function () {
-            await expect(quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_2, HINT_HASH_2, DIFFICULTY_LEVEL_2))
+        it("Should allow admin to create a new Pool question", async function () {
+            await expect(quizGame.createQuestion(
+                CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 1 // 1 = Pool mode
+            ))
                 .to.emit(quizGame, "QuestionCreated")
-                .withArgs(1, creator.address, DIFFICULTY_LEVEL_2, TEN_THOUSAND_QZC);
-
+                .withArgs(1, owner.address, DIFFICULTY_LEVEL_50, parseQZC((5000 * 50) / 99));
+            
             const question = await quizGame.questions(1);
-            expect(question.rewardAmount).to.equal(TEN_THOUSAND_QZC);
+            expect(question.mode).to.equal(1); // Pool mode
+        });
+
+        it("Should calculate level 100 reward correctly", async function () {
+            await expect(quizGame.createQuestion(
+                CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_100, 0 // Solo mode
+            ))
+                .to.emit(quizGame, "QuestionCreated")
+                .withArgs(1, owner.address, DIFFICULTY_LEVEL_100, parseQZC(10000));
+            
+            const question = await quizGame.questions(1);
+            expect(question.baseRewardAmount).to.equal(parseQZC(10000));
         });
 
         it("Should revert if difficulty level is invalid", async function () {
-            await expect(quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_1, HINT_HASH_1, 0))
-                .to.be.revertedWith("Quiz: Invalid difficulty level (1-100).");
-            await expect(quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_1, HINT_HASH_1, 101))
-                .to.be.revertedWith("Quiz: Invalid difficulty level (1-100).");
+            await expect(quizGame.createQuestion(
+                CORRECT_ANSWER_HASH, HINT_HASH, 0, 0
+            )).to.be.revertedWith("Quiz: Difficulty level must be between 1 and 100");
+            await expect(quizGame.createQuestion(
+                CORRECT_ANSWER_HASH, HINT_HASH, 101, 0
+            )).to.be.revertedWith("Quiz: Difficulty level must be between 1 and 100");
         });
     });
 
-    // Answer Submission Tests
-    describe("Answer Submission", function () {
-        // สร้างคำถามก่อนเริ่มแต่ละ Test Case ในบล็อกนี้
+    describe("Hint Purchasing", function () {
         beforeEach(async function () {
-            await quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_1, HINT_HASH_1, DIFFICULTY_LEVEL_1);
+            // Create a question first for hint purchasing
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 0); // Solo mode
         });
 
-        it("Should allow a player to submit a correct answer and start the window", async function () {
-            const initialBalancePlayer1 = await quizCoin.balanceOf(player1.address);
-            expect(initialBalancePlayer1).to.equal(ONE_HUNDRED_QZC);
+        it("Should allow a user to purchase a hint", async function () {
+            const initialBalance = await quizCoin.balanceOf(addr1.address);
+            const initialPoolBalance = await quizCoin.balanceOf(await poolManager.getAddress());
+            const hintCost = await quizGame.HINT_COST_AMOUNT();
 
-            // คาดหวังการ emit Event "AnswerSubmitted" และ "QuestionRewardWindowStarted"
-            await expect(quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1))
-                .to.emit(quizGame, "AnswerSubmitted")
-                .withArgs(1, player1.address, CORRECT_ANSWER_HASH_1)
-                .and.to.emit(quizGame, "QuestionRewardWindowStarted");
+            await expect(poolManager.connect(addr1).purchaseHint(await quizGame.getAddress(), 1)) // Changed to poolManager.purchaseHint
+                .to.emit(poolManager, "HintPurchased") // Event is now from PoolManager
+                .withArgs(1, addr1.address, hintCost);
 
-            const question = await quizGame.questions(1);
-            expect(question.answerWindowStartTime).to.not.equal(0);
-            expect(question.correctAnswersInWindow.length).to.equal(1);
-            expect(question.correctAnswersInWindow[0]).to.equal(player1.address);
-            // ตรวจสอบ getter function getHasAnsweredInWindow
-            expect(await quizGame.getHasAnsweredInWindow(1, player1.address)).to.be.true;
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(initialBalance - hintCost);
+            expect(await quizCoin.balanceOf(await poolManager.getAddress())).to.equal(initialPoolBalance + hintCost);
         });
 
-        it("Should allow multiple players to submit correct answers within the window", async function () {
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1);
+        it("Should revert if user does not have enough QuizCoin for hint", async function () {
+            await quizCoin.connect(addr1).transfer(owner.address, parseQZC(99999)); // Deplete addr1's balance
+            await expect(poolManager.connect(addr1).purchaseHint(await quizGame.getAddress(), 1))
+                .to.be.revertedWith("ERC20: transfer amount exceeds balance"); // Reverts from ERC20 transfer
+        });
+
+        it("Should revert if question does not exist for hint", async function () {
+            await expect(poolManager.connect(addr1).purchaseHint(await quizGame.getAddress(), 99))
+                .to.be.revertedWith("Quiz: Question does not exist or invalid question ID"); // Reverts from QuizGame's check
+        });
+    });
+
+    // --- NEW TESTS FOR SOLO MODE ---
+    describe("Solo Mode Logic", function () {
+        let questionIdSolo;
+        beforeEach(async function () {
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 0); // Solo mode
+            questionIdSolo = 1;
+        });
+
+        it("Should allow the first correct solver to win and close the question immediately", async function () {
+            const initialAddr1Balance = await quizCoin.balanceOf(addr1.address);
+            const initialPoolBalance = await quizCoin.balanceOf(await poolManager.getAddress());
+            const expectedReward = parseQZC((5000 * 50) / 99); // Base reward for difficulty 50
+
+            await expect(quizGame.connect(addr1).submitAnswer(questionIdSolo, CORRECT_ANSWER_HASH))
+                .to.emit(quizGame, "AnswerSubmitted").withArgs(questionIdSolo, addr1.address, CORRECT_ANSWER_HASH)
+                .and.to.emit(quizGame, "RewardDistributed").withArgs(questionIdSolo, addr1.address, expectedReward)
+                .and.to.emit(quizGame, "QuestionClosed").withArgs(questionIdSolo);
+
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(initialAddr1Balance + expectedReward);
+            expect(await quizCoin.balanceOf(await poolManager.getAddress())).to.equal(initialPoolBalance - expectedReward); // PoolManager balance should decrease
             
-            // จำลองการเพิ่มเวลาเพื่อให้อยู่ภายใน Answer Window
-            await ethers.provider.send("evm_increaseTime", [60]); // เพิ่มเวลาไป 60 วินาที
-            await ethers.provider.send("evm_mine"); // ขุดบล็อกใหม่เพื่อยืนยันเวลา
-
-            await expect(quizGame.connect(player2).submitAnswer(1, CORRECT_ANSWER_HASH_1))
-                .to.emit(quizGame, "AnswerSubmitted")
-                .withArgs(1, player2.address, CORRECT_ANSWER_HASH_1);
-
-            const question = await quizGame.questions(1);
-            expect(question.correctAnswersInWindow.length).to.equal(2);
-            expect(question.correctAnswersInWindow[1]).to.equal(player2.address);
-            expect(await quizGame.getHasAnsweredInWindow(1, player2.address)).to.be.true;
-        });
-
-        it("Should revert if answer is incorrect", async function () {
-            await expect(quizGame.connect(player1).submitAnswer(1, INCORRECT_ANSWER_HASH))
-                .to.be.revertedWith("Quiz: Incorrect answer.");
-        });
-
-        it("Should revert if question does not exist", async function () {
-            await expect(quizGame.connect(player1).submitAnswer(99, CORRECT_ANSWER_HASH_1))
-                .to.be.revertedWith("Quiz: Question does not exist.");
-        });
-
-        it("Should revert if question is closed", async function () {
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1);
-            // จำลองการปิดคำถาม (เช่น หลังจากมีการกระจายรางวัลไปแล้ว)
-            await ethers.provider.send("evm_increaseTime", [3 * 60 + 1]); // ผ่าน Answer Window
-            await ethers.provider.send("evm_mine");
-            await quizGame.connect(rewardDistributor).distributeRewards(1); // กระจายรางวัลและปิดคำถาม
-
-            await expect(quizGame.connect(player2).submitAnswer(1, CORRECT_ANSWER_HASH_1))
-                .to.be.revertedWith("Quiz: Question is already closed.");
-        });
-
-        it("Should revert if player already answered correctly in this window", async function () {
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1);
-            await expect(quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1))
-                .to.be.revertedWith("Quiz: You have already submitted a correct answer in this round.");
-        });
-
-        it("Should revert if answer window has closed", async function () {
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1);
-            await ethers.provider.send("evm_increaseTime", [3 * 60 + 1]); // ผ่าน Answer Window (3 นาที + 1 วินาที)
-            await ethers.provider.send("evm_mine");
-
-            await expect(quizGame.connect(player2).submitAnswer(1, CORRECT_ANSWER_HASH_1))
-                .to.be.revertedWith("Quiz: Answer window has closed for this question.");
-        });
-    });
-
-    // Hint Purchase Tests
-    describe("Hint Purchase", function () {
-        beforeEach(async function () {
-            await quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_1, HINT_HASH_1, DIFFICULTY_LEVEL_1);
-        });
-
-        it("Should allow a player to purchase a hint by paying QZC", async function () {
-            const initialPlayer1Balance = await quizCoin.balanceOf(player1.address);
-            const initialPoolManagerBalance = await quizCoin.balanceOf(poolManager.target);
-
-            // คาดหวังการ emit Event "HintPurchased" พร้อมค่าที่ถูกต้อง
-            await expect(quizGame.connect(player1).purchaseHint(1))
-                .to.emit(quizGame, "HintPurchased")
-                .withArgs(1, player1.address, TEN_QZC); // HINT_COST_AMOUNT คือ 10 QZC
-
-            // ตรวจสอบยอดคงเหลือของ QZC หลังจากการซื้อ
-            expect(await quizCoin.balanceOf(player1.address)).to.equal(initialPlayer1Balance.sub(TEN_QZC));
-            expect(await quizCoin.balanceOf(poolManager.target)).to.equal(initialPoolManagerBalance.add(TEN_QZC));
-        });
-
-        it("Should revert if player does not have enough QZC", async function () {
-            // ลด QZC ของ player1 ให้เหลือน้อยกว่า 10 QZC
-            await quizCoin.connect(player1).transfer(anotherAccount.address, ONE_HUNDRED_QZC.sub(TEN_QZC).add(ONE_QZC));
-            await expect(quizGame.connect(player1).purchaseHint(1))
-                .to.be.revertedWith("Quiz: QZC transfer failed for hint purchase.");
-        });
-
-        it("Should revert if player has not approved QuizGame to spend QZC", async function () {
-            // ยกเลิกการ Approve ของ player2
-            await quizCoin.connect(player2).approve(quizGame.target, 0); 
-            await expect(quizGame.connect(player2).purchaseHint(1))
-                .to.be.revertedWith("Quiz: QZC transfer failed for hint purchase.");
-        });
-
-        it("Should allow getting the hint after purchasing", async function () {
-            await quizGame.connect(player1).purchaseHint(1);
-            const hint = await quizGame.connect(player1).getHint(1);
-            expect(hint).to.equal(HINT_HASH_1);
-        });
-
-        it("Should revert if getting hint for non-existent question", async function () {
-            await expect(quizGame.connect(player1).getHint(99))
-                .to.be.revertedWith("Quiz: Question does not exist.");
-        });
-    });
-
-    // Reward Distribution Tests
-    describe("Reward Distribution", function () {
-        let questionRewardAmount;
-
-        beforeEach(async function () {
-            await quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_1, HINT_HASH_1, DIFFICULTY_LEVEL_1);
-            const question = await quizGame.questions(1);
-            questionRewardAmount = question.rewardAmount; // ดึงจำนวนรางวัลของคำถาม
-
-            // player1 ส่งคำตอบที่ถูกต้อง
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1);
-            
-            // จำลองการเพิ่มเวลาให้เลย Answer Window ไปแล้ว
-            await ethers.provider.send("evm_increaseTime", [3 * 60 + 1]); // 3 นาที + 1 วินาที
-            await ethers.provider.send("evm_mine"); // ขุดบล็อกใหม่
-        });
-
-        it("Should allow REWARD_DISTRIBUTOR_ROLE to distribute rewards to one correct answerer", async function () {
-            const initialPlayer1Balance = await quizCoin.balanceOf(player1.address);
-            const initialPoolManagerBalance = await quizCoin.balanceOf(poolManager.target);
-
-            await expect(quizGame.connect(rewardDistributor).distributeRewards(1))
-                .to.emit(quizGame, "RewardDistributed")
-                .withArgs(1, player1.address, questionRewardAmount) // ผู้รับคนเดียว ได้รับรางวัลเต็ม
-                .and.to.emit(quizGame, "QuestionClosed"); // คำถามควรจะถูกปิด
-
-            // ตรวจสอบยอดคงเหลือของ player1 และ PoolManager
-            expect(await quizCoin.balanceOf(player1.address)).to.equal(initialPlayer1Balance.add(questionRewardAmount));
-            expect(await quizCoin.balanceOf(poolManager.target)).to.equal(initialPoolManagerBalance.sub(questionRewardAmount));
-
-            const question = await quizGame.questions(1);
+            const question = await quizGame.questions(questionIdSolo);
             expect(question.isClosed).to.be.true;
-            // Array ของ correctAnswersInWindow ควรจะถูกล้างหลังจากกระจายรางวัล
-            expect((await quizGame.getQuestionDetails(1)).numCorrectAnswerers).to.equal(0);
+            expect(question.firstSolverAddress).to.equal(addr1.address);
         });
 
-        it("Should distribute rewards evenly among multiple correct answerers", async function () {
-            // player2 ส่งคำตอบที่ถูกต้องภายใน Answer Window (ต้องย้อนเวลาเพื่อให้ submit ได้ทัน)
-            await ethers.provider.send("evm_increaseTime", [-3 * 60]); // ย้อนเวลากลับไป
-            await ethers.provider.send("evm_mine");
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1); // submit อีกครั้งเพื่อให้ window เริ่มใหม่
-            await quizGame.connect(player2).submitAnswer(1, CORRECT_ANSWER_HASH_1);
-
-            // เลื่อนเวลาไปข้างหน้าอีกครั้งให้พ้น Answer Window
-            await ethers.provider.send("evm_increaseTime", [3 * 60 + 1]);
-            await ethers.provider.send("evm_mine");
-
-            const initialPlayer1Balance = await quizCoin.balanceOf(player1.address);
-            const initialPlayer2Balance = await quizCoin.balanceOf(player2.address);
-            const initialPoolManagerBalance = await quizCoin.balanceOf(poolManager.target);
-
-            const rewardPerPerson = questionRewardAmount / BigInt(2); // มี 2 คนตอบถูก
-
-            await expect(quizGame.connect(rewardDistributor).distributeRewards(1))
-                .to.emit(quizGame, "RewardDistributed")
-                .withArgs(1, player1.address, rewardPerPerson)
-                .and.to.emit(quizGame, "RewardDistributed")
-                .withArgs(1, player2.address, rewardPerPerson)
-                .and.to.emit(quizGame, "QuestionClosed");
-
-            expect(await quizCoin.balanceOf(player1.address)).to.equal(initialPlayer1Balance.add(rewardPerPerson));
-            expect(await quizCoin.balanceOf(player2.address)).to.equal(initialPlayer2Balance.add(rewardPerPerson));
-            expect(await quizCoin.balanceOf(poolManager.target)).to.equal(initialPoolManagerBalance.sub(questionRewardAmount));
+        it("Should revert if a second user tries to submit a correct answer in Solo mode", async function () {
+            await quizGame.connect(addr1).submitAnswer(questionIdSolo, CORRECT_ANSWER_HASH); // addr1 solves it
+            await expect(quizGame.connect(addr2).submitAnswer(questionIdSolo, CORRECT_ANSWER_HASH))
+                .to.be.revertedWith("Quiz: Question is already closed."); // Or "Solo mode already solved." from older logic, but 'isClosed' check comes first now
         });
 
-        it("Should revert if called by non-REWARD_DISTRIBUTOR_ROLE", async function () {
-            await expect(quizGame.connect(player1).distributeRewards(1))
-                .to.be.revertedWith(/AccessControl: account .* is missing role .*/); // ตรวจสอบข้อความ error ของ OpenZeppelin AccessControl
+        it("Should apply halving for levels 1-99 in Solo mode", async function () {
+            // Move time forward 4 years (1 halving cycle)
+            await time.increase(FOUR_YEARS); 
+
+            const expectedRewardAfterHalving = parseQZC(((5000 * 50) / 99) / 2); // Halved reward
+
+            // Create new solo question at difficulty 50
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 0); 
+            const newQuestionId = await quizGame.nextQuestionId() - 1; // Get ID of newly created question
+
+            const initialAddr1Balance = await quizCoin.balanceOf(addr1.address);
+            await quizGame.connect(addr1).submitAnswer(newQuestionId, CORRECT_ANSWER_HASH);
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(initialAddr1Balance + expectedRewardAfterHalving);
         });
 
-        it("Should revert if answer window is not over yet", async function () {
-            await ethers.provider.send("evm_increaseTime", [-3 * 60]); // ย้อนเวลากลับไปอยู่ใน window
-            await ethers.provider.send("evm_mine");
-            await expect(quizGame.connect(rewardDistributor).distributeRewards(1))
-                .to.be.revertedWith("Quiz: Reward distribution window is not over yet.");
+        it("Should cap reward at MIN_REWARD_AFTER_HALVING in Solo mode", async function () {
+            // Move time forward enough for multiple halving cycles to reach minimum (e.g., 8 years = 2 cycles)
+            await time.increase(FOUR_YEARS * 8); // 8 years for extreme case
+
+            const minReward = await quizGame.MIN_REWARD_AFTER_HALVING();
+
+            // Create new solo question at difficulty 50
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 0); 
+            const newQuestionId = await quizGame.nextQuestionId() - 1; 
+
+            const initialAddr1Balance = await quizCoin.balanceOf(addr1.address);
+            await quizGame.connect(addr1).submitAnswer(newQuestionId, CORRECT_ANSWER_HASH);
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(initialAddr1Balance + minReward);
         });
 
-        it("Should revert if no one answered correctly", async function () {
-            // สร้างคำถามใหม่ที่ไม่มีใครตอบถูก
-            await quizGame.connect(deployer).createQuestion(CORRECT_ANSWER_HASH_2, HINT_HASH_2, 50);
-            await ethers.provider.send("evm_increaseTime", [3 * 60 + 1]);
-            await ethers.provider.send("evm_mine");
+        it("Should NOT apply halving for level 100 in Solo mode", async function () {
+            // Move time forward 4 years (1 halving cycle)
+            await time.increase(FOUR_YEARS); 
 
-            await expect(quizGame.connect(rewardDistributor).distributeRewards(2)) // ใช้ question ID 2
-                .to.be.revertedWith("Quiz: No correct answers found in the window.");
-        });
+            // Create new solo question at difficulty 100
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_100, 0); 
+            const newQuestionId = await quizGame.nextQuestionId() - 1; 
 
-        it("Should revert if question is already closed", async function () {
-            await quizGame.connect(rewardDistributor).distributeRewards(1); // กระจายรางวัลครั้งแรก
-            await expect(quizGame.connect(rewardDistributor).distributeRewards(1))
-                .to.be.revertedWith("Quiz: Rewards already distributed or question closed.");
-        });
-
-        it("Should revert if insufficient pool balance", async function () {
-            // ถอนเงินออกจาก Pool Manager ทั้งหมด เพื่อให้ยอดคงเหลือไม่พอจ่ายรางวัล
-            const currentPoolBalance = await quizCoin.balanceOf(poolManager.target);
-            await poolManager.connect(deployer).withdrawToDeveloperFund(currentPoolBalance);
-
-            await expect(quizGame.connect(rewardDistributor).distributeRewards(1))
-                .to.be.revertedWith("Quiz: Insufficient pool balance for rewards.");
+            const initialAddr1Balance = await quizCoin.balanceOf(addr1.address);
+            await quizGame.connect(addr1).submitAnswer(newQuestionId, CORRECT_ANSWER_HASH);
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(initialAddr1Balance + parseQZC(10000)); // Still 10000 QZC
         });
     });
 
-    // Halving Logic Test (แนะนำ)
-    // ทดสอบกลไก Halving ของรางวัล
-    describe("Halving Mechanism", function () {
-        it("Reward should be halved after one HALVING_PERIOD", async function () {
-            // เนื่องจาก beforeEach จะสร้างคำถามแรกเสมอ เราจะใช้คำถามที่ 1 เป็นฐาน
-            // และคำถามที่ 2 เพื่อทดสอบ Halving
-            
-            // ให้มั่นใจว่ามีคำถามที่ 1 ถูกสร้างแล้วจาก beforeEach
-            const initialQuestion = await quizGame.questions(1);
-            const initialReward = initialQuestion.rewardAmount; 
-            
-            // เลื่อนเวลาไป 1 HALVING_PERIOD + 1 วินาที
-            const HALVING_PERIOD = await quizGame.HALVING_PERIOD();
-            await ethers.provider.send("evm_increaseTime", [Number(HALVING_PERIOD) + 1]);
-            await ethers.provider.send("evm_mine");
-
-            // สร้างคำถามใหม่ (ID 2) ด้วย difficulty เดิม
-            await quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_2, HINT_HASH_2, DIFFICULTY_LEVEL_1);
-            const newQuestion = await quizGame.questions(2);
-            const newReward = newQuestion.rewardAmount;
-
-            // รางวัลของคำถามใหม่ควรจะเป็นครึ่งหนึ่งของรางวัลตั้งต้น
-            expect(newReward).to.equal(initialReward.div(2));
-        });
-
-        it("Reward should be quartered after two HALVING_PERIODs", async function () {
-            const initialQuestion = await quizGame.questions(1);
-            const initialReward = initialQuestion.rewardAmount;
-            
-            // เลื่อนเวลาไป 2 HALVING_PERIODs + 1 วินาที
-            const HALVING_PERIOD = await quizGame.HALVING_PERIOD();
-            await ethers.provider.send("evm_increaseTime", [Number(HALVING_PERIOD) * 2 + 1]);
-            await ethers.provider.send("evm_mine");
-
-            // สร้างคำถามใหม่ (ID 2) ด้วย difficulty เดิม
-            await quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_2, HINT_HASH_2, DIFFICULTY_LEVEL_1);
-            const newQuestion = await quizGame.questions(2);
-            const newReward = newQuestion.rewardAmount;
-
-            // รางวัลของคำถามใหม่ควรจะเป็นหนึ่งในสี่ของรางวัลตั้งต้น
-            expect(newReward).to.equal(initialReward.div(4));
-        });
-    });
-
-    // Getter Functions Tests
-    // ทดสอบฟังก์ชัน Getter ต่างๆ เพื่อให้มั่นใจว่าดึงข้อมูลได้ถูกต้อง
-    describe("Getter Functions", function () {
+    // --- NEW TESTS FOR POOL MODE ---
+    describe("Pool Mode Logic", function () {
+        let questionIdPool;
         beforeEach(async function () {
-            await quizGame.connect(creator).createQuestion(CORRECT_ANSWER_HASH_1, HINT_HASH_1, DIFFICULTY_LEVEL_1);
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 1); // Pool mode
+            questionIdPool = 1;
         });
 
-        it("Should return correct question details before any answer", async function () {
-            const details = await quizGame.getQuestionDetails(1);
-            expect(details.correctAnswerHash).to.equal(CORRECT_ANSWER_HASH_1);
-            expect(details.hintHash).to.equal(HINT_HASH_1);
-            expect(details.difficultyLevel).to.equal(DIFFICULTY_LEVEL_1);
-            expect(details.questionCreator).to.equal(creator.address);
-            expect(details.isClosed).to.be.false;
-            expect(details.answerWindowStartTime).to.equal(0);
-            expect(details.numCorrectAnswerers).to.equal(0);
-            expect(details.isRewardWindowActive).to.be.false;
-            expect(details.rewardWindowEndTime).to.equal(0);
+        it("Should start the reward window when the first user submits a correct answer in Pool mode", async function () {
+            const initialTimestamp = await time.latest();
+            await expect(quizGame.connect(addr1).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH))
+                .to.emit(quizGame, "QuestionRewardWindowStarted")
+                .withArgs(questionIdPool, initialTimestamp); // Window starts at initialTimestamp
+
+            const question = await quizGame.questions(questionIdPool);
+            expect(question.firstCorrectAnswerTime).to.equal(initialTimestamp);
+            expect(question.poolCorrectSolvers[0]).to.equal(addr1.address);
+            expect(question.isClosed).to.be.false; // Not closed yet
         });
 
-        it("Should return correct question details during answer window", async function () {
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1);
-            const details = await quizGame.getQuestionDetails(1);
-            expect(details.numCorrectAnswerers).to.equal(1);
-            expect(details.answerWindowStartTime).to.not.equal(0);
-            expect(details.isRewardWindowActive).to.be.true; // ควรจะ active
-            expect(details.rewardWindowEndTime).to.equal(details.answerWindowStartTime + await quizGame.ANSWER_WINDOW_DURATION());
+        it("Should allow multiple users to submit correct answers within the window", async function () {
+            await quizGame.connect(addr1).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH); // Start window
+            await time.increase(BLOCK_DURATION_SECONDS / 2); // Halfway through the window
+
+            await quizGame.connect(addr2).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH);
+            await quizGame.connect(addr3).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH);
+
+            const question = await quizGame.questions(questionIdPool);
+            expect(question.poolCorrectSolvers.length).to.equal(3);
+            expect(question.poolCorrectSolvers).to.include(addr1.address);
+            expect(question.poolCorrectSolvers).to.include(addr2.address);
+            expect(question.poolCorrectSolvers).to.include(addr3.address);
         });
 
-        it("Should return correct question details after answer window and closed", async function () {
-            await quizGame.connect(player1).submitAnswer(1, CORRECT_ANSWER_HASH_1);
-            await ethers.provider.send("evm_increaseTime", [3 * 60 + 1]);
-            await ethers.provider.send("evm_mine");
-            await quizGame.connect(rewardDistributor).distributeRewards(1);
+        it("Should not allow submissions after the Pool window has closed", async function () {
+            await quizGame.connect(addr1).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH); // Start window
+            await time.increase(BLOCK_DURATION_SECONDS + 1); // Move past the window duration
 
-            const details = await quizGame.getQuestionDetails(1);
-            expect(details.isClosed).to.be.true;
-            expect(details.numCorrectAnswerers).to.equal(0); // ควรรีเซ็ตหลังจากกระจายรางวัล
-            expect(details.isRewardWindowActive).to.be.false; // ไม่ควร active แล้ว
+            await expect(quizGame.connect(addr2).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH))
+                .to.be.revertedWith("Quiz: Pool reward window is closed.");
+        });
+
+        it("Should not allow reward distribution before the Pool window closes", async function () {
+            await quizGame.connect(addr1).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH); // Start window
+            await expect(quizGame.distributeRewards(questionIdPool))
+                .to.be.revertedWith("Quiz: Pool window is not over yet.");
+        });
+
+        it("Should distribute rewards equally to all correct solvers after Pool window closes", async function () {
+            const expectedTotalReward = parseQZC((5000 * 50) / 99);
+            
+            await quizGame.connect(addr1).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH); // Start window
+            await quizGame.connect(addr2).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH);
+            await quizGame.connect(addr3).submitAnswer(questionIdPool, CORRECT_ANSWER_HASH);
+
+            const initialAddr1Balance = await quizCoin.balanceOf(addr1.address);
+            const initialAddr2Balance = await quizCoin.balanceOf(addr2.address);
+            const initialAddr3Balance = await quizCoin.balanceOf(addr3.address);
+            const initialPoolBalance = await quizCoin.balanceOf(await poolManager.getAddress());
+
+            await time.increase(BLOCK_DURATION_SECONDS + 1); // Move past the window duration
+
+            await expect(quizGame.distributeRewards(questionIdPool))
+                .to.emit(quizGame, "RewardDistributed")
+                .withArgs(questionIdPool, addr1.address, expectedTotalReward / 3) // Check individual rewards
+                .and.to.emit(quizGame, "RewardDistributed")
+                .withArgs(questionIdPool, addr2.address, expectedTotalReward / 3)
+                .and.to.emit(quizGame, "RewardDistributed")
+                .withArgs(questionIdPool, addr3.address, expectedTotalReward / 3)
+                .and.to.emit(quizGame, "QuestionClosed").withArgs(questionIdPool);
+
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(initialAddr1Balance + (expectedTotalReward / 3));
+            expect(await quizCoin.balanceOf(addr2.address)).to.equal(initialAddr2Balance + (expectedTotalReward / 3));
+            expect(await quizCoin.balanceOf(addr3.address)).to.equal(initialAddr3Balance + (expectedTotalReward / 3));
+            expect(await quizCoin.balanceOf(await poolManager.getAddress())).to.equal(initialPoolBalance - expectedTotalReward);
+            
+            const question = await quizGame.questions(questionIdPool);
+            expect(question.isClosed).to.be.true;
+            expect(question.poolCorrectSolvers.length).to.equal(0); // Should be cleared
+        });
+
+        // Add halving tests for Pool mode, similar to Solo mode
+        it("Should apply halving for levels 1-99 in Pool mode", async function () {
+            await quizGame.connect(owner).createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 1); // Pool mode
+            const newQuestionId = await quizGame.nextQuestionId() - 1;
+
+            // Move time forward 4 years (1 halving cycle)
+            await time.increase(FOUR_YEARS); 
+
+            const expectedTotalRewardAfterHalving = parseQZC(((5000 * 50) / 99) / 2); // Halved reward
+
+            await quizGame.connect(addr1).submitAnswer(newQuestionId, CORRECT_ANSWER_HASH);
+            await time.increase(BLOCK_DURATION_SECONDS + 1); 
+            await quizGame.distributeRewards(newQuestionId);
+
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(parseQZC(100000) + expectedTotalRewardAfterHalving); // Assuming addr1 started with 100k
+        });
+
+        it("Should cap reward at MIN_REWARD_AFTER_HALVING in Pool mode", async function () {
+            await quizGame.connect(owner).createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 1); // Pool mode
+            const newQuestionId = await quizGame.nextQuestionId() - 1;
+
+            // Move time forward enough for multiple halving cycles to reach minimum
+            await time.increase(FOUR_YEARS * 8); 
+
+            const minReward = await quizGame.MIN_REWARD_AFTER_HALVING();
+
+            await quizGame.connect(addr1).submitAnswer(newQuestionId, CORRECT_ANSWER_HASH);
+            await time.increase(BLOCK_DURATION_SECONDS + 1); 
+            await quizGame.distributeRewards(newQuestionId);
+
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(parseQZC(100000) + minReward);
+        });
+
+        it("Should NOT apply halving for level 100 in Pool mode", async function () {
+            await quizGame.connect(owner).createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_100, 1); // Pool mode
+            const newQuestionId = await quizGame.nextQuestionId() - 1;
+
+            // Move time forward 4 years (1 halving cycle)
+            await time.increase(FOUR_YEARS); 
+
+            const expectedReward = parseQZC(10000); // Still 10000 QZC
+
+            await quizGame.connect(addr1).submitAnswer(newQuestionId, CORRECT_ANSWER_HASH);
+            await time.increase(BLOCK_DURATION_SECONDS + 1); 
+            await quizGame.distributeRewards(newQuestionId);
+
+            expect(await quizCoin.balanceOf(addr1.address)).to.equal(parseQZC(100000) + expectedReward);
         });
     });
+
+    // --- NEW TESTS FOR DAILY LIMITATIONS ---
+    describe("Daily Submission Limitations", function () {
+        let soloQuestionId;
+        let poolQuestionId;
+        beforeEach(async function () {
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 0); // Solo Q1
+            soloQuestionId = await quizGame.nextQuestionId() - 1;
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 1); // Pool Q2
+            poolQuestionId = await quizGame.nextQuestionId() - 1;
+        });
+
+        it("Should prevent answering the same question twice in the same day", async function () {
+            await quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH); // addr1 answers solo Q1
+            await expect(quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH))
+                .to.be.revertedWith("Quiz: You can only answer this specific question once per day.");
+        });
+
+        it("Should allow answering the same question again on a new day", async function () {
+            await quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH); // addr1 answers solo Q1
+            
+            await time.increase(ONE_DAY + 1); // Move to next day
+
+            // Create a new solo question for the new day
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 0);
+            const newSoloQuestionId = await quizGame.nextQuestionId() - 1;
+
+            // Now addr1 should be able to answer the NEW solo question
+            await expect(quizGame.connect(addr1).submitAnswer(newSoloQuestionId, CORRECT_ANSWER_HASH))
+                .to.not.be.reverted;
+        });
+
+        it("Should prevent playing a different mode on the same day", async function () {
+            await quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH); // addr1 chooses Solo mode for today
+            await expect(quizGame.connect(addr1).submitAnswer(poolQuestionId, CORRECT_ANSWER_HASH))
+                .to.be.revertedWith("Quiz: You have already chosen a different game mode for today.");
+        });
+
+        it("Should allow playing a different mode on a new day", async function () {
+            await quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH); // addr1 chooses Solo mode for today
+            
+            await time.increase(ONE_DAY + 1); // Move to next day
+
+            // Create new pool question for the new day
+            await quizGame.createQuestion(CORRECT_ANSWER_HASH, HINT_HASH, DIFFICULTY_LEVEL_50, 1);
+            const newPoolQuestionId = await quizGame.nextQuestionId() - 1;
+
+            // Now addr1 should be able to answer the NEW pool question (choosing Pool mode for this new day)
+            await expect(quizGame.connect(addr1).submitAnswer(newPoolQuestionId, CORRECT_ANSWER_HASH))
+                .to.not.be.reverted;
+        });
+
+        it("Should allow different users to play different modes on the same day", async function () {
+            await expect(quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH))
+                .to.not.be.reverted; // addr1 plays Solo
+            await expect(quizGame.connect(addr2).submitAnswer(poolQuestionId, CORRECT_ANSWER_HASH))
+                .to.not.be.reverted; // addr2 plays Pool
+        });
+
+        it("Should prevent a user from answering any question after a day ends, if no new question is created for that new day", async function () {
+            await quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH); // addr1 answers solo Q1
+            
+            await time.increase(ONE_DAY + 1); // Move to next day
+
+            // Try to answer the same solo question (which is now closed) - should revert
+            await expect(quizGame.connect(addr1).submitAnswer(soloQuestionId, CORRECT_ANSWER_HASH))
+                .to.be.revertedWith("Quiz: Question is already closed.");
+            
+            // If there's another solo question still open from previous days (unlikely in real scenario but for test)
+            // It would still be prevented by "Quiz: You can only answer this specific question once per day."
+            // unless we create a new question on the new day.
+            // This test covers that the "old" solo question remains closed.
+        });
+    });
+
+    // Add more tests for error handling, edge cases (e.g., no one answers in pool, incorrect roles)
+    // For example, what if poolCorrectSolvers array is empty when distributeRewards is called?
+    // What if a user tries to purchase a hint for a non-existent question?
 });

@@ -14,7 +14,7 @@ const config = {
                         runs: 200 // ค่านี้สามารถปรับได้ตามความเหมาะสม
                     },
                     // *** เพิ่มบรรทัดนี้เข้ามาครับ ***
-                    viaIR: true // เปิดใช้งาน IR optimizer
+                    //viaIR: true // เปิดใช้งาน IR optimizer
                 }
             }
         ]

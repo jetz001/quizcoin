@@ -115,3 +115,15 @@ console.log(`Deployer's QuizCoin balance: ${ethers.formatEther(deployerBalance)}
 Bash
 
 npx hardhat test
+
+contracts/
+├── QuizGame.sol             // สัญญาหลักของเกม ที่จะรวม Logic ทั้งหมดเข้ามา (อาจจะผ่านการ inherit)
+├── interfaces/              // โฟลเดอร์สำหรับ Interfaces
+│   ├── IQuizCoin.sol        // Interface สำหรับ QuizCoin (เผื่อต้องเรียกใช้ฟังก์ชันเฉพาะจาก QuizGame)
+│   └── IPoolManager.sol     // Interface สำหรับ PoolManager (เผื่อต้องเรียกใช้ฟังก์ชันเฉพาะจาก QuizGame)
+├── modules/                 // โฟลเดอร์สำหรับโมดูลต่างๆ ของ QuizGame
+│   ├── QuizGameBase.sol     // สัญญา Base สำหรับตัวแปร/Events/Modifiers ทั่วไปที่ทุกส่วนของ QuizGame ใช้ร่วมกัน
+│   ├── QuizGameRewardLogic.sol // สำหรับ Logic การคำนวณรางวัลและ Halving (_calculateCurrentReward, distributeRewards)
+│   └── QuizGameModeLogic.sol // สำหรับ Logic การจัดการโหมด Solo/Pool และการจำกัดการเล่นใน submitAnswer
+└── libraries/
+    └── Utils.sol            // (เผื่อมี) ไฟล์สำหรับ Library ที่มีฟังก์ชันยูทิลิตี้ทั่วไป

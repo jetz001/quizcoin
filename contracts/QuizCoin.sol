@@ -9,7 +9,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 contract QuizCoin is Initializable, ERC20Upgradeable, AccessControlUpgradeable, UUPSUpgradeable {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE"); // <--- มีอยู่แล้ว
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -23,7 +23,7 @@ contract QuizCoin is Initializable, ERC20Upgradeable, AccessControlUpgradeable, 
 
         _grantRole(DEFAULT_ADMIN_ROLE, _defaultAdmin);
         _grantRole(MINTER_ROLE, _defaultAdmin);
-        _grantRole(BURNER_ROLE, _defaultAdmin); // <--- มีอยู่แล้ว
+        _grantRole(BURNER_ROLE, _defaultAdmin);
     }
 
     function mint(address to, uint256 amount) public onlyRole(MINTER_ROLE) {
