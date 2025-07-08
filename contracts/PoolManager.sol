@@ -1,153 +1,110 @@
+// contracts/PoolManager.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.20;
 
-// นำเข้าไลบรารี OpenZeppelin เวอร์ชัน Upgradeable
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol"; // <-- เพิ่มบรรทัดนี้
-// บรรทัดนี้ถูกลบออก: import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-// Interface สำหรับสัญญา QuizCoin (เพื่อให้ PoolManager สามารถโต้ตอบกับ QuizCoin ได้)
-interface IQuizCoin {
-    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    function allowance(address owner, address spender) external view returns (uint256);
-}
-
-// Interface สำหรับสัญญา QuizGame (เพื่อให้ PoolManager สามารถตรวจสอบบทบาทของ QuizGame ได้)
-interface IQuizGame {
-    function hasRole(bytes32 role, address account) external view returns (bool);
-    // บรรทัดนี้ถูกลบออก: bytes32 constant POOL_MANAGER_ROLE = keccak256("POOL_MANAGER_ROLE");
-}
-
-contract PoolManager is Initializable, OwnableUpgradeable, AccessControlUpgradeable, UUPSUpgradeable { // <-- เพิ่ม UUPSUpgradeable ที่นี่
-    // ตัวแปรสถานะ
-    IQuizCoin public i_quizCoin; // Instance ของสัญญา QuizCoin
-    address public i_quizGameAddress; // ที่อยู่ของสัญญา QuizGame
-
-    mapping(address => uint256) public poolBalances; // ยอดคงเหลือ QZC ของแต่ละผู้เล่นใน Pool
-
-    // บทบาทสำหรับ AccessControl
-    // Role นี้จะถูกมอบให้ QuizGame เพื่อให้สามารถถอนเงินจาก Pool ของผู้เล่นได้เมื่อซื้อ Hint
+/// @custom:security-contact security@example.com
+contract PoolManager is Initializable, OwnableUpgradeable, AccessControlUpgradeable, UUPSUpgradeable {
     bytes32 public constant POOL_MANAGER_ROLE = keccak256("POOL_MANAGER_ROLE");
 
-    // Events ที่เพิ่มเข้ามา
+    // Address ของ QuizCoin token
+    IERC20 private s_quizCoin; 
+
+    // Address ของ QuizGame contract ที่ได้รับอนุญาตให้โต้ตอบกับ PoolManager
+    address public i_quizGameAddress; 
+
+    // Events
     event Deposited(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
+    event QuizGameAddressUpdated(address oldAddress, address newAddress);
+
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    // Constructor นี้มีไว้เพื่อป้องกันการเรียก 'initialize' โดยตรงเท่านั้น
     constructor() {
-        _disableInitializers(); 
+        _disableInitializers();
     }
 
-    // ฟังก์ชัน initialize จะถูกเรียกเพียงครั้งเดียวเมื่อสัญญาถูก Deploy ผ่าน Proxy
-    // ใช้สำหรับกำหนดค่าเริ่มต้นของสัญญา
-    function initialize(address _quizCoinAddress, address _quizGameAddress) public initializer {
-        // เรียก initialize ของสัญญาแม่
-        __Ownable_init(msg.sender);
-        __AccessControl_init();
-        // ไม่ต้องเรียก __UUPSUpgradeable_init() ที่นี่ เพราะ OwnableUpgradeable และ AccessControlUpgradeable จัดการให้แล้ว
+    function initialize(address _quizCoinAddress, address _initialOwner, address _defaultAdmin) public initializer {
+        __Ownable_init(_initialOwner);
+        __AccessControl_init(); 
+        _grantRole(DEFAULT_ADMIN_ROLE, _defaultAdmin); 
+        _grantRole(DEFAULT_ADMIN_ROLE, _initialOwner); 
+        _grantRole(POOL_MANAGER_ROLE, _initialOwner); // Grant initial owner the POOL_MANAGER_ROLE initially
 
-        // กำหนดค่าเริ่มต้นให้กับตัวแปรสถานะ
-        i_quizCoin = IQuizCoin(_quizCoinAddress);
-        i_quizGameAddress = _quizGameAddress; // ตั้งค่า QuizGame Address ในตอนเริ่มต้น
-
-        // มอบบทบาทเริ่มต้นให้ผู้ Deploy (สำหรับ Admin Role)
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender); // <-- แก้ไขจาก DEFAULT_ADMIN_ADMIN_ROLE เป็น DEFAULT_ADMIN_ROLE
-        // PoolManager จะไม่ได้รับ POOL_MANAGER_ROLE ให้ตัวเอง เพราะบทบาทนี้มีไว้สำหรับ QuizGame ที่จะเรียก PoolManager
+        require(_quizCoinAddress != address(0), "QuizCoin address cannot be zero");
+        s_quizCoin = IERC20(_quizCoinAddress);
     }
 
-    // ฟังก์ชันฝาก QZC เข้า Pool
-    function deposit(uint256 _amount) public {
-        if (_amount == 0) {
-            revert ZeroDepositAmount();
-        }
+    // Public getter function for s_quizCoin
+    function quizCoin() public view returns (address) {
+        return address(s_quizCoin);
+    }
 
-        // ตรวจสอบว่าผู้เล่นได้อนุมัติให้ PoolManager ถอน QZC ไปยังสัญญา PoolManager ได้
-        if (i_quizCoin.allowance(msg.sender, address(this)) < _amount) {
-            revert InsufficientAllowance();
+    /**
+     * @notice ฟังก์ชันนี้ใช้สำหรับตั้งค่า address ของ QuizGame Contract
+     * มีเพียงเจ้าของสัญญาเท่านั้นที่สามารถเรียกฟังก์ชันนี้ได้
+     * @param _quizGameAddress The address of the QuizGame contract.
+     */
+    function setQuizGameAddress(address _quizGameAddress) public onlyOwner {
+        require(_quizGameAddress != address(0), "QuizGame address cannot be zero");
+        
+        // Revoke POOL_MANAGER_ROLE from old QuizGame address if it was set
+        if (i_quizGameAddress != address(0)) {
+            _revokeRole(POOL_MANAGER_ROLE, i_quizGameAddress);
         }
+        
+        emit QuizGameAddressUpdated(i_quizGameAddress, _quizGameAddress);
+        i_quizGameAddress = _quizGameAddress;
+        
+        // Grant POOL_MANAGER_ROLE to the new QuizGame address
+        _grantRole(POOL_MANAGER_ROLE, _quizGameAddress);
+    }
 
-        // โอน QZC จากผู้เล่นไปยังสัญญา PoolManager
-        bool success = i_quizCoin.transferFrom(msg.sender, address(this), _amount);
-        if (!success) {
-            revert TransferFailed();
-        }
-        poolBalances[msg.sender] += _amount; // เพิ่มยอดใน Pool Balance ของผู้เล่น
-
+    /**
+     * @notice ฟังก์ชันรับฝาก QuizCoin จากผู้เล่นเข้าสู่ Pool
+     * ผู้ส่ง (msg.sender) ต้องทำการ approve PoolManager ก่อนเรียกฟังก์ชันนี้
+     * @param _amount จำนวน QuizCoin ที่ต้องการฝาก
+     */
+    function deposit(uint256 _amount) external {
+        require(_amount > 0, "Amount must be greater than zero");
+        require(s_quizCoin.transferFrom(msg.sender, address(this), _amount), "Pool: Deposit transfer failed.");
         emit Deposited(msg.sender, _amount);
     }
 
-    // ฟังก์ชันถอน QZC ออกจาก Pool (สำหรับผู้เล่นถอนของตัวเอง)
-    function withdraw(uint256 _amount) public {
-        if (_amount == 0) {
-            revert ZeroWithdrawAmount();
-        }
-        // ป้องกันไม่ให้สัญญา QuizGame เรียกฟังก์ชันนี้โดยตรง
-        if (msg.sender == i_quizGameAddress) {
-             revert UnauthorizedWithdraw(); 
-        }
-
-        // ตรวจสอบยอดคงเหลือของผู้เล่นใน Pool
-        if (poolBalances[msg.sender] < _amount) {
-            revert InsufficientBalance();
-        }
-
-        poolBalances[msg.sender] -= _amount; // ลดยอดใน Pool Balance ของผู้เล่น
-        bool success = i_quizCoin.transfer(msg.sender, _amount); // โอน QZC กลับไปให้ผู้เล่น
-        if (!success) {
-            revert TransferFailed();
-        }
-
-        emit Withdrawn(msg.sender, _amount);
-    }
-
-    // ฟังก์ชันสำหรับ QuizGame Contract เพื่อถอน QZC ของผู้เล่นที่ซื้อ Hint
-    // เฉพาะผู้ที่มี POOL_MANAGER_ROLE (ซึ่งก็คือ QuizGame Contract) เท่านั้นที่เรียกได้
-    function withdrawForUser(address _user, uint256 _amount) public onlyRole(POOL_MANAGER_ROLE) {
-        // ตรวจสอบว่าผู้เรียกฟังก์ชันนี้คือ QuizGame Contract จริงๆ
-        if (msg.sender != i_quizGameAddress) {
-            revert UnauthorizedCaller(); // อนุญาตให้ QuizGame เท่านั้นที่เรียกได้
-        }
-        if (_amount == 0) {
-            revert ZeroWithdrawAmount();
-        }
-        if (poolBalances[_user] < _amount) {
-            revert InsufficientBalance();
-        }
-
-        poolBalances[_user] -= _amount; // ลดยอดใน Pool Balance ของผู้เล่น
-        bool success = i_quizCoin.transfer(_user, _amount); // โอน QZC ให้ผู้ใช้โดยตรง
-        if (!success) {
-            revert TransferFailed();
-        }
+    /**
+     * @notice ฟังก์ชันสำหรับเบิก QuizCoin ออกจาก Pool ให้กับผู้ใช้
+     * ฟังก์ชันนี้มีเพียง Contract ที่มี POOL_MANAGER_ROLE เท่านั้นที่สามารถเรียกได้
+     * (ในกรณีนี้คือ QuizGame contract)
+     * @param _user The address of the user to withdraw for.
+     * @param _amount The amount of QuizCoin to withdraw.
+     */
+    function withdrawForUser(address _user, uint256 _amount) external onlyRole(POOL_MANAGER_ROLE) {
+        // ตรวจสอบว่าผู้เรียกคือ i_quizGameAddress (เสริมความปลอดภัย)
+        require(msg.sender == i_quizGameAddress, "Pool: Caller must be the authorized QuizGame contract.");
+        require(_amount > 0, "Amount must be greater than zero");
+        require(s_quizCoin.balanceOf(address(this)) >= _amount, "Pool: Insufficient balance for withdrawal.");
+        
+        require(s_quizCoin.transfer(_user, _amount), "Pool: Withdrawal transfer failed.");
         emit Withdrawn(_user, _amount);
     }
 
-    // Setter สำหรับเปลี่ยนที่อยู่ของ QuizGame
-    // เฉพาะเจ้าของสัญญาเท่านั้นที่เรียกได้
-    function setQuizGameAddress(address _newQuizGameAddress) public onlyOwner {
-        if (_newQuizGameAddress == address(0)) {
-            revert InvalidAddress();
-        }
-        i_quizGameAddress = _newQuizGameAddress;
-    }
-    
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
-    // ฟังก์ชันสำหรับดูยอดคงเหลือของผู้เล่นใน Pool
-    function getBalance(address _user) public view returns (uint256) {
-        return poolBalances[_user];
+    /**
+     * @notice ตรวจสอบยอดคงเหลือของ QuizCoin ใน PoolManager
+     */
+    function getPoolBalance() public view returns (uint256) {
+        return s_quizCoin.balanceOf(address(this));
     }
 
-    // Custom Errors
-    error ZeroDepositAmount();
-    error InsufficientAllowance();
-    error ZeroWithdrawAmount();
-    error InsufficientBalance();
-    error InvalidAddress();
-    error TransferFailed();
-    error UnauthorizedWithdraw();
-    error UnauthorizedCaller();
+    /**
+     * @notice เพื่อให้ PoolManager สามารถอัปเกรดได้ มีเพียงเจ้าของเท่านั้นที่สามารถเรียกได้
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    // *** ลบทั้ง fallback() และ receive() function ออกไปเลย ***
+    // สัญญาจะปฏิเสธการรับ Ether โดยอัตโนมัติและคืนเงินให้ผู้ส่ง
 }

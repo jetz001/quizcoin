@@ -1,240 +1,268 @@
+// contracts/QuizGame.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.28;
+pragma solidity ^0.8.20;
 
-// นำเข้าไลบรารี OpenZeppelin เวอร์ชัน Upgradeable
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "./IQuizCoin.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol"; // <-- เพิ่มบรรทัดนี้
-// บรรทัดนี้ถูกลบออก: import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "./PoolManager.sol";
 
-// Interface สำหรับสัญญา PoolManager (เพื่อให้ QuizGame สามารถโต้ตอบกับ PoolManager ได้)
-interface IPoolManager {
-    // QuizGame จะเรียกฟังก์ชันนี้เพื่อถอน QZC ของผู้เล่นที่ซื้อ Hint
-    function withdrawForUser(address _user, uint256 _amount) external; 
-    function getBalance(address _user) external view returns (uint256); // ใช้เพื่อตรวจสอบยอดเงินของผู้เล่นใน Pool
-    function hasRole(bytes32 role, address account) external view returns (bool);
-    // บรรทัดนี้ถูกลบออก: bytes32 constant POOL_MANAGER_ROLE = keccak256("POOL_MANAGER_ROLE");
-}
+contract QuizGame is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable {
+    IQuizCoin public quizCoin;
+    PoolManager public poolManager; 
 
-// Interface สำหรับสัญญา QuizCoin (เพื่อให้ QuizGame สามารถโต้ตอบกับ QuizCoin ได้)
-interface IQuizCoin {
-    function mint(address to, uint256 amount) external;
-}
+    // Constants
+    uint256 public GAME_START_TIMESTAMP; // Changed to dynamic, set in initialize
+    uint256 public constant HALVING_PERIOD = 365 days; // 1 year for easier testing
+    uint256 public constant ANSWER_WINDOW_DURATION = 3 minutes;
+    
+    // กำหนดค่าเหล่านี้เป็น public constant เพื่อให้ test เข้าถึงได้ง่าย
+    uint256 public constant BASE_REWARD_MULTIPLIER = 5000 * (10**18); // 5000 QZC in wei for base difficulty 99
+    uint256 public constant MAX_REWARD_FOR_100_DIFFICULTY = 10000 * (10**18); // 10000 QZC in wei for difficulty 100
+    uint256 public constant HINT_COST_AMOUNT = 10 * (10**18); // 10 QZC in wei
 
-contract QuizGame is Initializable, OwnableUpgradeable, AccessControlUpgradeable, UUPSUpgradeable { // <-- เพิ่ม UUPSUpgradeable ที่นี่
-    // ตัวแปรสถานะ
-    IQuizCoin public QZ_COIN; // Instance ของสัญญา QuizCoin
-    IPoolManager public i_poolManagerAddress; // Instance ของสัญญา PoolManager
-    address public i_developerFundAddress; // ที่อยู่ของ Developer Fund
+    bytes32 public constant REWARD_DISTRIBUTOR_ROLE = keccak256("REWARD_DISTRIBUTOR_ROLE");
 
-    // Mapping สำหรับเก็บคำถาม
     struct Question {
-        bytes32 answerHash;
+        bytes32 correctAnswerHash;
         bytes32 hintHash;
-        uint256 difficulty;
-        uint256 createdAt;
-        bool isSolved;
-        address solver;
-        uint256 hintCost;
-        uint256 solvedAt;
+        uint256 rewardAmount;
+        uint256 difficultyLevel;
+        address questionCreator;
+        bool isClosed;
+        uint256 answerWindowStartTime;
+        address[] correctAnswersInWindow; // ใช้เก็บ address ของผู้ที่ตอบถูกใน window
+        mapping(address => bool) hasAnsweredInWindow; // ใช้เช็คว่า address นี้ตอบไปแล้วหรือยัง
     }
 
     mapping(uint256 => Question) public questions;
-    mapping(uint256 => mapping(address => bool)) public hasPurchasedHint; // questionId => userAddress => bool
+    uint256 public nextQuestionId;
 
-    uint256 public nextQuestionId; // ใช้สำหรับ ID คำถามถัดไป
+    event QuestionCreated(uint256 indexed questionId, address indexed creator, uint256 difficultyLevel, uint256 rewardAmount);
+    event AnswerSubmitted(uint256 indexed questionId, address indexed participant, bytes32 answerHash);
+    event HintPurchased(uint256 indexed questionId, address indexed buyer, uint256 cost);
+    event RewardDistributed(uint256 indexed questionId, address indexed recipient, uint256 amount);
+    event QuestionClosed(uint256 indexed questionId);
+    event QuestionRewardWindowStarted(uint256 indexed questionId, uint256 startTime, uint256 endTime);
 
-    // ค่าคงที่ (ยังคงเป็น constant เพื่อประหยัด Gas)
-    uint256 public constant HALVING_RATE_BPS = 1000; // 10% (1000 basis points)
-    uint256 public constant SECONDS_PER_HALVING_PERIOD = 24 * 60 * 60 * 30; // ประมาณ 30 วัน
-    uint256 public constant INITIAL_REWARD_LEVEL_1_99 = 100 * (10 ** 18); // 100 QZC
-    uint256 public constant INITIAL_REWARD_LEVEL_100 = 500 * (10 ** 18); // 500 QZC
-    uint256 public constant REWARD_MULTIPLIER_LEVEL_1_99 = 100; // สำหรับ Difficulty 1-99
-    uint256 public constant MIN_REWARD_LEVEL_1_99 = 10 * (10 ** 18); // 10 QZC
-    uint256 public constant MIN_REWARD_LEVEL_100 = 50 * (10 ** 18); // 50 QZC
-    uint256 public constant DEVELOPER_FEE_BPS = 50; // 5% (500 basis points)
-    uint256 public constant HINT_COST_MULTIPLIER = 10; // Hint Cost is difficulty * 10
-
-    // บทบาทสำหรับ AccessControl
-    bytes32 public constant QUESTION_CREATOR_ROLE = keccak256("QUESTION_CREATOR_ROLE");
-    bytes32 public constant POOL_MANAGER_ROLE = keccak256("POOL_MANAGER_ROLE"); // Role สำหรับ PoolManager ใน QuizGame
-
-    // Events
-    event QuestionCreated(uint256 indexed questionId, bytes32 answerHash, uint256 difficulty, uint256 hintCost, uint256 timestamp);
-    event QuestionSolved(uint256 indexed questionId, address indexed solver, uint256 rewardAmount, uint256 feeAmount, uint256 timestamp);
-    event HintPurchased(uint256 indexed questionId, address indexed buyer, uint256 cost, uint256 timestamp);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    // Constructor นี้มีไว้เพื่อป้องกันการเรียก 'initialize' โดยตรงเท่านั้น
     constructor() {
-        _disableInitializers(); 
+        _disableInitializers();
     }
 
-    // ฟังก์ชัน initialize จะถูกเรียกเพียงครั้งเดียวเมื่อสัญญาถูก Deploy ผ่าน Proxy
-    // ใช้สำหรับกำหนดค่าเริ่มต้นของสัญญา
-    function initialize(address _quizCoinAddress, address _developerFundAddress, address _poolManagerAddress) public initializer {
-        // เรียก initialize ของสัญญาแม่
-        __Ownable_init(msg.sender);
+    /**
+     * @notice Initializes the QuizGame contract.
+     * @param _quizCoinAddress The address of the QuizCoin token contract.
+     * @param _poolManagerAddress The address of the PoolManager contract.
+     * @param _defaultAdmin The address to be granted the DEFAULT_ADMIN_ROLE and REWARD_DISTRIBUTOR_ROLE.
+     * @param _gameStartTimestamp The timestamp when the game officially starts for halving calculation.
+     */
+    function initialize(address _quizCoinAddress, address _poolManagerAddress, address _defaultAdmin, uint256 _gameStartTimestamp) public initializer {
         __AccessControl_init();
-        // ไม่ต้องเรียก __UUPSUpgradeable_init() ที่นี่ เพราะ OwnableUpgradeable และ AccessControlUpgradeable จัดการให้แล้ว
+        __ReentrancyGuard_init();
 
-        // กำหนดค่าเริ่มต้นให้กับตัวแปรสถานะ
-        QZ_COIN = IQuizCoin(_quizCoinAddress);
-        i_developerFundAddress = _developerFundAddress;
-        i_poolManagerAddress = IPoolManager(_poolManagerAddress);
+        quizCoin = IQuizCoin(_quizCoinAddress);
+        poolManager = PoolManager(_poolManagerAddress);
         nextQuestionId = 1;
+        GAME_START_TIMESTAMP = _gameStartTimestamp; // Set dynamically
 
-        // มอบบทบาทเริ่มต้น
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(QUESTION_CREATOR_ROLE, msg.sender);
-        _grantRole(POOL_MANAGER_ROLE, _poolManagerAddress); // มอบ POOL_MANAGER_ROLE ให้ PoolManager
+        _grantRole(DEFAULT_ADMIN_ROLE, _defaultAdmin);
+        _grantRole(REWARD_DISTRIBUTOR_ROLE, _defaultAdmin);
     }
 
-    // --- FUNCTIONS ---
-    function createQuestion(bytes32 _answerHash, bytes32 _hintHash, uint256 _difficulty) public onlyRole(QUESTION_CREATOR_ROLE) returns (uint256) {
-        if (_difficulty == 0) {
-            revert InvalidDifficulty();
+    /**
+     * @dev สร้างคำถามใหม่
+     * @param _correctAnswerHash Hash ของคำตอบที่ถูกต้อง
+     * @param _hintHash Hash ของ Hint ที่เกี่ยวข้อง
+     * @param _difficultyLevel ระดับความยากของคำถาม (1-100)
+     */
+    function createQuestion(bytes32 _correctAnswerHash, bytes32 _hintHash, uint256 _difficultyLevel)
+        public
+    {
+        require(_difficultyLevel > 0 && _difficultyLevel <= 100, "Quiz: Invalid difficulty level (1-100).");
+        
+        uint256 calculatedReward;
+        if (_difficultyLevel == 100) {
+            calculatedReward = MAX_REWARD_FOR_100_DIFFICULTY;
+        } else {
+            uint256 baseReward = _getBaseRewardByDifficulty(_difficultyLevel);
+            uint256 halvingFactor = _getHalvingFactor();
+            
+            require(halvingFactor > 0, "Quiz: Halving factor cannot be zero (should be at least 1).");
+            calculatedReward = baseReward / halvingFactor;
         }
+        
+        require(calculatedReward > 0, "Quiz: Calculated reward is zero. Halving may have reduced it too much.");
 
-        uint256 hintCost = _difficulty * HINT_COST_MULTIPLIER * (10 ** 18);
-
-        questions[nextQuestionId] = Question({
-            answerHash: _answerHash,
-            hintHash: _hintHash,
-            difficulty: _difficulty,
-            createdAt: block.timestamp,
-            isSolved: false,
-            solver: address(0),
-            hintCost: hintCost,
-            solvedAt: 0
-        });
-
-        emit QuestionCreated(nextQuestionId, _answerHash, _difficulty, hintCost, block.timestamp);
-        nextQuestionId++;
-        return nextQuestionId - 1;
+        uint256 currentQuestionId = nextQuestionId++; // Use a local variable then increment
+        Question storage newQuestion = questions[currentQuestionId]; 
+        
+        newQuestion.correctAnswerHash = _correctAnswerHash;
+        newQuestion.hintHash = _hintHash;
+        newQuestion.rewardAmount = calculatedReward;
+        newQuestion.difficultyLevel = _difficultyLevel;
+        newQuestion.questionCreator = msg.sender;
+        newQuestion.isClosed = false;
+        newQuestion.answerWindowStartTime = 0;
+        
+        emit QuestionCreated(currentQuestionId, msg.sender, _difficultyLevel, calculatedReward);
     }
 
-    function submitAnswer(uint256 _questionId, bytes32 _answerHash) public {
+    /**
+     * @dev ผู้เล่นส่งคำตอบสำหรับคำถาม
+     * จะบันทึกผู้ตอบถูกและเริ่มนับเวลา หากเป็นคนแรกที่ตอบถูกในรอบนั้น
+     * @param _questionId ID ของคำถาม
+     * @param _answerHash Hash ของคำตอบที่ผู้เล่นส่งมา
+     */
+    function submitAnswer(uint256 _questionId, bytes32 _answerHash) public nonReentrant {
         Question storage question = questions[_questionId];
 
-        if (question.createdAt == 0) {
-            revert QuestionDoesNotExist(_questionId);
-        }
-        if (question.isSolved) {
-            revert QuestionAlreadySolved(_questionId);
-        }
-        if (question.answerHash != _answerHash) {
-            revert IncorrectAnswer();
+        require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
+        require(!question.isClosed, "Quiz: Question is already closed.");
+        
+        require(question.correctAnswerHash == _answerHash, "Quiz: Incorrect answer.");
+
+        require(!question.hasAnsweredInWindow[msg.sender], "Quiz: You have already submitted a correct answer in this round.");
+
+        if (question.answerWindowStartTime == 0) {
+            question.answerWindowStartTime = block.timestamp;
+            emit QuestionRewardWindowStarted(_questionId, question.answerWindowStartTime, question.answerWindowStartTime + ANSWER_WINDOW_DURATION);
+        } else {
+            require(block.timestamp <= question.answerWindowStartTime + ANSWER_WINDOW_DURATION, "Quiz: Answer window has closed for this question.");
         }
 
-        question.isSolved = true;
-        question.solver = msg.sender;
-        question.solvedAt = block.timestamp;
+        question.correctAnswersInWindow.push(msg.sender);
+        question.hasAnsweredInWindow[msg.sender] = true;
 
-        _mintReward(_questionId, msg.sender, question.difficulty, question.createdAt, question.solvedAt);
+        emit AnswerSubmitted(_questionId, msg.sender, _answerHash);
     }
 
-    function purchaseHint(uint256 _questionId) public {
+    /**
+     * @dev อนุญาตให้ผู้เล่นซื้อ Hint สำหรับคำถาม
+     * @param _questionId ID ของคำถาม
+     */
+    function purchaseHint(uint256 _questionId) public nonReentrant {
         Question storage question = questions[_questionId];
 
-        if (question.createdAt == 0) {
-            revert QuestionDoesNotExist(_questionId);
-        }
-        if (hasPurchasedHint[_questionId][msg.sender]) {
-            revert HintAlreadyPurchased();
-        }
-        if (question.hintCost == 0) {
-            revert HintCostZero();
-        }
+        require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
+        require(!question.isClosed, "Quiz: Question is already closed.");
 
-        // ตรวจสอบว่าผู้เล่นมี QZC ใน PoolManager เพียงพอ
-        if (i_poolManagerAddress.getBalance(msg.sender) < question.hintCost) {
-            revert InsufficientPoolBalanceForHint(); 
-        }
-
-        // เรียก PoolManager เพื่อถอน QZC จากผู้เล่นที่ซื้อ Hint
-        // QuizGame จะเป็นผู้เรียก PoolManager.withdrawForUser โดยส่ง address ของผู้เล่นปัจจุบัน (msg.sender) ไปด้วย
-        i_poolManagerAddress.withdrawForUser(msg.sender, question.hintCost);
-
-        hasPurchasedHint[_questionId][msg.sender] = true;
-        emit HintPurchased(_questionId, msg.sender, question.hintCost, block.timestamp);
+        require(quizCoin.transferFrom(msg.sender, address(poolManager), HINT_COST_AMOUNT), "Quiz: QZC transfer failed for hint purchase.");
+        
+        emit HintPurchased(_questionId, msg.sender, HINT_COST_AMOUNT);
     }
 
+    /**
+     * @dev ผู้เล่นสามารถรับ Hint ได้หลังจากซื้อไปแล้ว
+     * @param _questionId ID ของคำถาม
+     * @return bytes32 Hash ของ Hint
+     */
     function getHint(uint256 _questionId) public view returns (bytes32) {
         Question storage question = questions[_questionId];
-
-        if (question.createdAt == 0) {
-            revert QuestionDoesNotExist(_questionId);
-        }
-        if (!hasPurchasedHint[_questionId][msg.sender]) {
-            revert HintNotPurchased();
-        }
+        require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
         return question.hintHash;
     }
 
-    // --- Internal/Private Functions ---
-    function _mintReward(uint256 _questionId, address _solver, uint256 _difficulty, uint256 _createdAt, uint256 _solvedAt) internal {
-        uint256 timeElapsed = _solvedAt - _createdAt;
-        uint256 numHalvingPeriods = timeElapsed / SECONDS_PER_HALVING_PERIOD;
+    /**
+     * @dev ฟังก์ชันสำหรับกระจายรางวัลให้กับผู้ที่ตอบถูกภายใน Window เวลา
+     * ต้องถูกเรียกโดย REWARD_DISTRIBUTOR_ROLE (เช่น Chainlink Keeper หรือ Bot)
+     * @param _questionId ID ของคำถามที่จะกระจายรางวัล
+     */
+    function distributeRewards(uint256 _questionId) public onlyRole(REWARD_DISTRIBUTOR_ROLE) nonReentrant {
+        Question storage question = questions[_questionId];
 
-        uint256 initialReward;
-        uint256 minReward;
+        require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
+        require(!question.isClosed, "Quiz: Rewards already distributed or question closed.");
+        require(question.answerWindowStartTime != 0, "Quiz: No one has answered correctly yet for this question.");
+        
+        require(block.timestamp > question.answerWindowStartTime + ANSWER_WINDOW_DURATION, "Quiz: Reward distribution window is not over yet.");
 
-        if (_difficulty < 100) {
-            initialReward = INITIAL_REWARD_LEVEL_1_99 * _difficulty / REWARD_MULTIPLIER_LEVEL_1_99;
-            minReward = MIN_REWARD_LEVEL_1_99;
-        } else if (_difficulty == 100) {
-            initialReward = INITIAL_REWARD_LEVEL_100;
-            minReward = MIN_REWARD_LEVEL_100;
-        } else {
-            revert InvalidDifficulty();
+        uint256 numCorrectAnswerers = question.correctAnswersInWindow.length;
+        require(numCorrectAnswerers > 0, "Quiz: No correct answers found in the window.");
+
+        uint256 totalRewardAmount = question.rewardAmount;
+        uint256 rewardPerPerson = totalRewardAmount / numCorrectAnswerers; 
+        require(rewardPerPerson > 0, "Quiz: Reward per person is zero."); 
+
+        require(poolManager.getPoolBalance() >= totalRewardAmount, "Quiz: Insufficient pool balance for rewards.");
+
+        for (uint256 i = 0; i < numCorrectAnswerers; i++) {
+            address recipient = question.correctAnswersInWindow[i];
+            poolManager.withdrawForUser(recipient, rewardPerPerson);
+            emit RewardDistributed(_questionId, recipient, rewardPerPerson);
         }
 
-        uint256 currentReward = initialReward;
-        for (uint256 i = 0; i < numHalvingPeriods; i++) {
-            currentReward = currentReward * (10000 - HALVING_RATE_BPS) / 10000;
-            if (currentReward < minReward) {
-                currentReward = minReward;
-                break;
-            }
-        }
-
-        uint256 feeAmount = currentReward * DEVELOPER_FEE_BPS / 10000;
-        uint256 rewardAmountToSolver = currentReward - feeAmount;
-
-        QZ_COIN.mint(_solver, rewardAmountToSolver);
-        QZ_COIN.mint(i_developerFundAddress, feeAmount);
-
-        emit QuestionSolved(_questionId, _solver, rewardAmountToSolver, feeAmount, block.timestamp);
+        question.isClosed = true;
+        // ล้าง array correctAnswersInWindow หลังจากกระจายรางวัลแล้ว
+        delete question.correctAnswersInWindow; // <-- เพิ่มบรรทัดนี้เพื่อแก้ไขปัญหา numCorrectAnswerers ใน test
+        
+        emit QuestionClosed(_questionId); 
     }
 
-    // Setters for admin/owner
-    function setDeveloperFundAddress(address _newDeveloperFundAddress) public onlyOwner {
-        if (_newDeveloperFundAddress == address(0)) {
-            revert InvalidAddress();
-        }
-        i_developerFundAddress = _newDeveloperFundAddress;
+    /**
+     * @dev คำนวณ Base Reward ตามระดับความยาก (1-99)
+     * @param _difficulty ระดับความยาก (1-99)
+     * @return จำนวน Base Reward (ในหน่วย wei)
+     */
+    function _getBaseRewardByDifficulty(uint256 _difficulty) internal pure returns (uint256) {
+        return (BASE_REWARD_MULTIPLIER * _difficulty) / 99;
     }
 
-    function setPoolManagerAddress(address _newPoolManagerAddress) public onlyOwner {
-        if (_newPoolManagerAddress == address(0)) {
-            revert InvalidAddress();
+    /**
+     * @dev คำนวณ Halving Factor ตามเวลาที่ผ่านไปจาก GAME_START_TIMESTAMP
+     * Factor จะเพิ่มขึ้นเป็น 2, 4, 8... ทุก HALVING_PERIOD (เช่น 4 ปี)
+     * @return Halving Factor (เช่น 1, 2, 4, 8...)
+     */
+    function _getHalvingFactor() internal view returns (uint256) {
+        if (block.timestamp < GAME_START_TIMESTAMP) {
+            return 1; 
         }
-        i_poolManagerAddress = IPoolManager(_newPoolManagerAddress);
-        // เมื่อเปลี่ยน PoolManager Address ต้องแน่ใจว่า Role ถูกต้องใน PoolManager ใหม่ด้วย
-        // โดยปกติจะจัดการใน deploy script หรือ upgrade script
+
+        uint256 periodsSinceStart = (block.timestamp - GAME_START_TIMESTAMP) / HALVING_PERIOD;
+        return (1 << periodsSinceStart); 
     }
-    
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
-    // Custom Errors
-    error InvalidDifficulty();
-    error QuestionDoesNotExist(uint256 questionId);
-    error QuestionAlreadySolved(uint256 questionId);
-    error IncorrectAnswer();
-    error HintAlreadyPurchased();
-    error HintNotPurchased();
-    error HintCostZero();
-    error InvalidAddress();
-    error InsufficientPoolBalanceForHint();
+
+    /**
+     * @dev Getter function เพื่อตรวจสอบว่าผู้ใช้ได้ตอบคำถามใน window ปัจจุบันแล้วหรือยัง
+     * @param _questionId ID ของคำถาม
+     * @param _user ที่อยู่ของผู้ใช้
+     * @return bool True ถ้าผู้ใช้ได้ตอบไปแล้ว False ถ้ายัง
+     */
+    function getHasAnsweredInWindow(uint256 _questionId, address _user) public view returns (bool) {
+        // ตรวจสอบว่าคำถามมีอยู่จริงก่อน
+        require(questions[_questionId].correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
+        return questions[_questionId].hasAnsweredInWindow[_user];
+    }
+
+    // ฟังก์ชันเพิ่มเติมสำหรับ Debugging หรือข้อมูล
+    function getQuestionDetails(uint256 _questionId) public view returns (
+        bytes32 correctAnswerHash,
+        bytes32 hintHash,
+        uint256 rewardAmount,
+        uint256 difficultyLevel,
+        address questionCreator,
+        bool isClosed,
+        uint256 answerWindowStartTime,
+        uint256 numCorrectAnswerers, // จำนวนคนตอบถูก
+        bool isRewardWindowActive,
+        uint256 rewardWindowEndTime
+    ) {
+        Question storage q = questions[_questionId];
+        require(q.correctAnswerHash != bytes32(0), "Quiz: Question does not exist."); // ตรวจสอบว่าคำถามมีอยู่จริง
+
+        correctAnswerHash = q.correctAnswerHash;
+        hintHash = q.hintHash;
+        rewardAmount = q.rewardAmount;
+        difficultyLevel = q.difficultyLevel;
+        questionCreator = q.questionCreator;
+        isClosed = q.isClosed;
+        answerWindowStartTime = q.answerWindowStartTime;
+        numCorrectAnswerers = q.correctAnswersInWindow.length; // ดึงจาก length ของ array
+        
+        // ตรวจสอบว่า reward window ยัง active หรือไม่
+        isRewardWindowActive = (q.answerWindowStartTime != 0 && block.timestamp <= q.answerWindowStartTime + ANSWER_WINDOW_DURATION && !q.isClosed);
+        rewardWindowEndTime = (q.answerWindowStartTime != 0) ? (q.answerWindowStartTime + ANSWER_WINDOW_DURATION) : 0;
+    }
 }
