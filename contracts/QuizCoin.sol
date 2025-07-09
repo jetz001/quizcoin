@@ -1,38 +1,17 @@
-// contracts/QuizCoin.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract QuizCoin is Initializable, ERC20Upgradeable, AccessControlUpgradeable, UUPSUpgradeable {
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
+contract QuizCoin is ERC20, Ownable {
+    constructor() ERC20("QuizCoin", "QZC") Ownable(msg.sender) {
+        // Mint บางส่วนให้กับผู้ deploy เพื่อเริ่มต้น
+        _mint(msg.sender, 1000000 * 10**18); // 1,000,000 QZC
     }
 
-    function initialize(address _defaultAdmin) public initializer {
-        __ERC20_init("QuizCoin Token", "QZC");
-        __AccessControl_init();
-        __UUPSUpgradeable_init(); 
-
-        _grantRole(DEFAULT_ADMIN_ROLE, _defaultAdmin);
-        _grantRole(MINTER_ROLE, _defaultAdmin);
-        _grantRole(BURNER_ROLE, _defaultAdmin);
-    }
-
-    function mint(address to, uint256 amount) public onlyRole(MINTER_ROLE) {
+    // ฟังก์ชันสำหรับ minting (อาจจะจำกัดเฉพาะ owner หรือ role)
+    function mint(address to, uint256 amount) public onlyOwner {
         _mint(to, amount);
     }
-
-    function burnFrom(address account, uint256 amount) public onlyRole(BURNER_ROLE) {
-        _burn(account, amount);
-    }
-
-    function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 }

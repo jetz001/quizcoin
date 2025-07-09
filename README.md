@@ -116,14 +116,46 @@ Bash
 
 npx hardhat test
 
-contracts/
-├── QuizGame.sol             // สัญญาหลักของเกม ที่จะรวม Logic ทั้งหมดเข้ามา (อาจจะผ่านการ inherit)
-├── interfaces/              // โฟลเดอร์สำหรับ Interfaces
-│   ├── IQuizCoin.sol        // Interface สำหรับ QuizCoin (เผื่อต้องเรียกใช้ฟังก์ชันเฉพาะจาก QuizGame)
-│   └── IPoolManager.sol     // Interface สำหรับ PoolManager (เผื่อต้องเรียกใช้ฟังก์ชันเฉพาะจาก QuizGame)
-├── modules/                 // โฟลเดอร์สำหรับโมดูลต่างๆ ของ QuizGame
-│   ├── QuizGameBase.sol     // สัญญา Base สำหรับตัวแปร/Events/Modifiers ทั่วไปที่ทุกส่วนของ QuizGame ใช้ร่วมกัน
-│   ├── QuizGameRewardLogic.sol // สำหรับ Logic การคำนวณรางวัลและ Halving (_calculateCurrentReward, distributeRewards)
-│   └── QuizGameModeLogic.sol // สำหรับ Logic การจัดการโหมด Solo/Pool และการจำกัดการเล่นใน submitAnswer
-└── libraries/
-    └── Utils.sol            // (เผื่อมี) ไฟล์สำหรับ Library ที่มีฟังก์ชันยูทิลิตี้ทั่วไป
+your-project-name/  <-- นี่คือโฟลเดอร์หลักของโปรเจกต์ Hardhat ของคุณ
+├── contracts/
+│   ├── QuizGameDiamond.sol       # สัญญา **Diamond** หลัก: นี่คือ Proxy ที่จะถูก Deploy จริงๆ
+│   │                               # ผู้ใช้จะเรียกใช้ฟังก์ชันผ่านสัญญาตัวนี้
+│   │                               # (เก็บ State ทั้งหมดของเกม)
+│   │
+│   ├── QuizCoin.sol              # สัญญา ERC20 Token ของเกม (ไม่เกี่ยวข้องกับ Diamond โดยตรง)
+│   │
+│   ├── PoolManager.sol           # สัญญา PoolManager สำหรับจัดการ Pool Rewards (ไม่เกี่ยวข้องกับ Diamond โดยตรง)
+│   │
+│   ├── interfaces/               # โฟลเดอร์สำหรับ Interface ของสัญญาภายนอก
+│   │   ├── IQuizCoin.sol         # Interface สำหรับ QuizCoin
+│   │   └── IPoolManager.sol      # Interface สำหรับ PoolManager
+│   │
+│   └── facets/                   # **โฟลเดอร์หลักสำหรับ Facets ทั้งหมด**
+│       ├── QuizGameBaseFacet.sol # **Facet ฐาน:** อาจจะเก็บ `AppStorage` (โครงสร้าง State ของ Diamond),
+│       │                         # ค่าคงที่, Enums, Structs ที่ใช้ร่วมกัน, และฟังก์ชัน Admin พื้นฐาน
+│       │
+│       ├── QuizGameRewardFacet.sol # **Facet สำหรับ Logic รางวัล:** เช่น ฟังก์ชันคำนวณรางวัล (`_calculateCurrentReward`)
+│       │                           # และฟังก์ชันแจกจ่ายรางวัล (`distributeRewards`)
+│       │
+│       ├── QuizGameModeFacet.sol   # **Facet สำหรับ Logic โหมดเกม:** เช่น ฟังก์ชันสร้างคำถาม (`createQuestion`)
+│       │                           # และฟังก์ชันส่งคำตอบ (`submitAnswer`) ที่มี Logic โหมด Solo/Pool
+│       │
+│       ├── DiamondCutFacet.sol     # **Facet สำคัญสำหรับการจัดการ:** มีฟังก์ชัน `diamondCut`
+│       │                           # เพื่อเพิ่ม, ลบ, หรืออัปเดต Facets อื่นๆ
+│       │
+│       └── DiamondLoupeFacet.sol   # **Facet สำหรับการตรวจสอบ:** มีฟังก์ชันสำหรับอ่านข้อมูล Facets ที่ Diamond มีอยู่
+│                                   # เช่น `facets()`, `facetFunctionSelectors()` (ตามมาตรฐาน ERC-2535)
+│
+├── scripts/                      # โฟลเดอร์สำหรับ Deployment Scripts และ Scripts อื่นๆ
+│   ├── deploy.js                 # Script สำหรับ Deploy Diamond และ Facets
+│   └── ...
+│
+├── test/                         # โฟลเดอร์สำหรับ Test Scripts
+│   ├── QuizGame.test.js          # Test สำหรับ Logic ของเกม
+│   └── ...
+│
+├── hardhat.config.js             # ไฟล์ตั้งค่า Hardhat สำหรับการคอมไพล์, Test, Deploy
+├── package.json                  # ข้อมูลโปรเจกต์และ Dependencies
+├── package-lock.json             # ล็อค Dependencies
+├── .env                          # ไฟล์สำหรับ Environment Variables (เช่น Private Keys, RPC URLs)
+└── .gitignore                    # ไฟล์สำหรับบอก Git ว่าไม่ต้อง Tracking ไฟล์ไหนบ้าง
