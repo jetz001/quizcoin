@@ -29,6 +29,7 @@ library LibAppStorage {
         uint256 BLOCK_DURATION_SECONDS;
         uint256 BASE_REWARD_FOR_LEVEL_99;
         uint256 REWARD_FOR_LEVEL_100;
+        uint256 TREASURY_FEE_PERCENTAGE; // ค่าธรรมเนียมสำหรับ Treasury (เช่น 50 สำหรับ 0.5%)
 
         // --- Halving Constants ---
         uint256 HALVING_PERIOD_SECONDS;
@@ -49,12 +50,11 @@ library LibAppStorage {
     }
 
     // ฟังก์ชันคำนวณรางวัล
-    // เปลี่ยนจาก internal view เป็น public view เพื่อให้ Facets อื่นๆ สามารถเรียกใช้ได้โดยตรง
     function _calculateCurrentReward(
         AppStorage storage ds, // รับ ds เข้ามา
         uint256 _baseRewardAmount,
         uint256 _difficultyLevel
-    ) public view returns (uint256) { // *** เปลี่ยน internal เป็น public ที่นี่ ***
+    ) public view returns (uint256) {
         if (_difficultyLevel == 100) {
             return _baseRewardAmount;
         }

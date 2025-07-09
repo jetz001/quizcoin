@@ -8,11 +8,8 @@ import '../interfaces/IPoolManager.sol';
 import '../interfaces/IQuizGameEvents.sol';
 
 // Facet สำหรับ Logic การคำนวณรางวัลและการแจกจ่าย
-contract QuizGameRewardFacet is IQuizGameEvents { // ต้อง is IQuizGameEvents เพื่อ emit Event
+contract QuizGameRewardFacet is IQuizGameEvents {
     // ใช้ LibAppStorage.s() เพื่อเข้าถึง state ของ Diamond
-
-    // ฟังก์ชัน _calculateCurrentReward ถูกย้ายไปที่ LibAppStorage และเป็น public view แล้ว
-    // ดังนั้นจึงไม่จำเป็นต้องประกาศใน Facet นี้แล้ว
 
     function distributeRewards(uint256 _questionId) public {
         LibAppStorage.AppStorage storage ds = LibAppStorage.s();
@@ -34,8 +31,19 @@ contract QuizGameRewardFacet is IQuizGameEvents { // ต้อง is IQuizGameEv
         // เรียกใช้ _calculateCurrentReward จาก LibAppStorage โดยตรง
         uint256 totalFinalReward = LibAppStorage._calculateCurrentReward(ds, question.baseRewardAmount, question.difficultyLevel);
 
+        // คำนวณค่าธรรมเนียม 0.5%
+        uint256 treasuryFee = (totalFinalReward * ds.TREASURY_FEE_PERCENTAGE) / 10000; // 0.5% = 50 / 10000
+        uint256 rewardForPoolSolvers = totalFinalReward - treasuryFee;
+
+        // Mint ค่าธรรมเนียมไปที่ Treasury (Diamond Contract)
+        ds.poolManager.mintAndTransferToTreasury(treasuryFee);
+
         // คำนวณรางวัลต่อผู้แก้ไข (เฉลี่ยเท่ากัน)
-        uint256 rewardPerSolver = totalFinalReward / question.poolCorrectSolvers.length;
+        // ตรวจสอบไม่ให้หารด้วยศูนย์
+        uint256 rewardPerSolver = 0;
+        if (question.poolCorrectSolvers.length > 0) {
+            rewardPerSolver = rewardForPoolSolvers / question.poolCorrectSolvers.length;
+        }
 
         question.isClosed = true;
 

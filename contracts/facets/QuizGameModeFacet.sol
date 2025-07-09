@@ -3,13 +3,12 @@ pragma solidity ^0.8.20;
 
 import { LibAppStorage, QuestionMode, Question } from '../libraries/LibAppStorage.sol';
 import { AccessControlUpgradeable } from '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
-// ไม่จำเป็นต้อง import QuizGameRewardFacet.sol อีกต่อไป เพราะ _calculateCurrentReward ถูกย้ายไป LibAppStorage
-// import "./QuizGameRewardFacet.sol"; // บรรทัดนี้ควรถูกลบออกไป ถ้ามี
 import '../interfaces/IPoolManager.sol';
 import '../interfaces/IQuizGameEvents.sol';
+import '../interfaces/IQuizCoin.sol'; // Import IQuizCoin
 
 // Facet สำหรับ Logic การสร้างคำถามและการส่งคำตอบ
-contract QuizGameModeFacet is IQuizGameEvents { // ต้อง is IQuizGameEvents เพื่อ emit Event
+contract QuizGameModeFacet is IQuizGameEvents {
     // ใช้ LibAppStorage.s() เพื่อเข้าถึง state ของ Diamond
 
     function createQuestion(
@@ -86,13 +85,20 @@ contract QuizGameModeFacet is IQuizGameEvents { // ต้อง is IQuizGameEven
             question.firstSolverAddress = msg.sender;
             question.isClosed = true;
 
-            // เรียกใช้ _calculateCurrentReward จาก LibAppStorage โดยตรง (เนื่องจากมันเป็น public view แล้ว)
-            uint256 finalReward = LibAppStorage._calculateCurrentReward(ds, question.baseRewardAmount, question.difficultyLevel);
+            // เรียกใช้ _calculateCurrentReward จาก LibAppStorage โดยตรง
+            uint256 totalReward = LibAppStorage._calculateCurrentReward(ds, question.baseRewardAmount, question.difficultyLevel);
             
-            // ถอนรางวัลให้ผู้เล่นผ่าน PoolManager
-            ds.poolManager.withdrawForUser(msg.sender, finalReward);
+            // คำนวณค่าธรรมเนียม 0.5%
+            uint256 treasuryFee = (totalReward * ds.TREASURY_FEE_PERCENTAGE) / 10000; // 0.5% = 50 / 10000
+            uint256 rewardForSoloSolver = totalReward - treasuryFee;
 
-            emit RewardDistributed(_questionId, msg.sender, finalReward);
+            // Mint ค่าธรรมเนียมไปที่ Treasury (Diamond Contract)
+            ds.poolManager.mintAndTransferToTreasury(treasuryFee);
+
+            // Mint รางวัลให้ผู้เล่นผ่าน PoolManager
+            ds.poolManager.withdrawForUser(msg.sender, rewardForSoloSolver);
+
+            emit RewardDistributed(_questionId, msg.sender, rewardForSoloSolver);
             emit QuestionClosed(_questionId);
 
         } else if (question.mode == QuestionMode.Pool) {
@@ -128,14 +134,10 @@ contract QuizGameModeFacet is IQuizGameEvents { // ต้อง is IQuizGameEven
         require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
         require(!question.isClosed, "Quiz: Question is already closed.");
 
-        // หักค่าใช้จ่าย Hint จากผู้เล่น (เรียก approve และ transferFrom จาก QuizCoin)
-        // ต้องให้ Diamond (หรือ Facet นี้) ได้รับอนุญาตให้ใช้ QuizCoin จากผู้เล่นก่อน
-        // โดยผู้เล่นจะต้องเรียก approve บนสัญญา QuizCoin เพื่อให้ Diamond มีสิทธิ์ใช้เหรียญของผู้เล่น
+        // หักค่าใช้จ่าย Hint จากผู้เล่นและโอนเข้า Diamond Contract (Treasury) โดยตรง
+        // ผู้เล่นต้อง approve ให้ Diamond Contract สามารถใช้ QuizCoin ได้ก่อน
         require(ds.quizCoin.transferFrom(msg.sender, address(this), ds.HINT_COST_AMOUNT), "Quiz: QuizCoin transfer failed for hint.");
 
-        // สามารถคืน HintHash ให้ผู้เล่นได้ (หรือส่งเป็น event)
-        // ในสถานการณ์จริงอาจจะส่ง HintHash กลับไปให้ client ผ่าน return หรือ event
-        // สำหรับตอนนี้ เราแค่ emit event
         emit HintPurchased(_questionId, msg.sender, ds.HINT_COST_AMOUNT);
     }
 }
