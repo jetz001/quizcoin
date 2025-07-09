@@ -1,96 +1,136 @@
-# QuizCoin (QZC) Tokenomics & Smart Contract Roles
+# QuizCoin (QZC) Tokenomics and Smart Contract Roles
 
-This document outlines the core tokenomics of QuizCoin (QZC) and the roles of its smart contracts within the decentralized quiz game ecosystem.
+This document outlines the core tokenomics of QuizCoin (QZC), the roles of its smart contracts, and the in-game mechanics within the decentralized quiz game ecosystem.
 
 ---
 
 ## 1. QuizCoin (QZC) Tokenomics Overview
 
-### Max Supply: Unlimited
+### 1.1 Max Supply: Unlimited
 * QZC has an **unlimited** total supply.
 * **Minting Mechanism:** New QZC tokens are created ("minted") exclusively when a player successfully answers a quiz question for the first time in a block. This applies to both "Solo" and "Pool" game modes.
 
-### Initial Distribution: None
+### 1.2 Initial Distribution: None
 * There is **no pre-minted supply, initial distribution, or Airdrop** of QZC tokens.
 * Upon deployment, the QuizCoin contract's total supply is zero.
 * The token supply will only begin to circulate in the ecosystem once players start earning rewards by correctly answering quiz questions.
 
-### Treasury / Ecosystem Fund
+### 1.3 Treasury / Ecosystem Fund
 The project's longevity and development are supported by a dedicated Treasury, managed by the Diamond Contract.
 
-* **Funding Sources:**
+* **1.3.1 Funding Sources:**
     * **0.5% Reward Fee:** When a player successfully answers a question (in either Solo or Pool mode), 0.5% of the total calculated reward amount is minted and directed to the **Diamond Contract**, which serves as the project's primary Treasury.
     * **Hint Purchase Fees:** All QuizCoin (QZC) tokens spent by players to purchase hints (clues) for quiz questions are transferred **directly** from the player's wallet to the **Diamond Contract (Treasury)**.
-* **Purpose & Usage:**
+* **1.3.2 Purpose & Usage:**
     * Operational costs, such as domain rental.
     * Development and maintenance expenses.
     * Other expenditures critical for the growth and sustainability of the QuizCoin ecosystem.
 
 ---
 
-## 2. Smart Contract Mechanisms & Roles
+## 2. Game Mechanics and Features
 
-The QuizCoin game is built using the **Diamond Standard (EIP-2535)**, enabling a modular, upgradeable, and efficient smart contract architecture.
+### 2.1 Game Modes
+QuizCoin features two primary game modes with distinct reward and play mechanisms:
 
-### `QuizCoin.sol` (ERC-20 Token)
+* **2.1.1 Solo Mode (Levels 1-99):**
+    * **Winner:** The first player to answer a question correctly in a given block receives the full reward amount for that question's level (after the 0.5% Treasury fee).
+    * **Question Status:** Once a winner emerges in Solo Mode, the question is immediately closed, and no other players can submit answers for that question in the current block.
+* **2.1.2 Pool Mode (Levels 1-99):**
+    * **Answer Window:** When the first player answers a question correctly in Pool Mode, a 3-minute countdown (Pool Window) begins, allowing other players to participate and submit their answers.
+    * **Reward Distribution:** After the 3-minute Pool Window closes, the total reward for that question (after the 0.5% Treasury fee) is equally divided among all players who submitted a correct answer within that timeframe.
+* **2.1.3 Level 100 Questions (Special Level):**
+    * **Frequency:** Only 1 question per day.
+    * **Reward:** Correct solvers (in either Solo or Pool Mode) receive a fixed reward of 10,000 QZC, with **no Halving** applied to this reward.
+    * **Answer Format:** Answers are submitted via a textbox, allowing for decimal numbers with 2 decimal places. Answers are rounded up when the third decimal place is 0.005 (e.g., 0.005 rounds up to 0.01).
+
+### 2.2 Reward and Answering Mechanics
+
+* **Rewards for Levels 1-99:** Players can earn between 1-5,000 QZC, varying based on the question's difficulty level.
+* **Halving Mechanism:** Rewards for Level 1-99 questions will be halved ("Halving") every 4 years to control supply and ensure long-term sustainability.
+* **Answering Frequency:**
+    * **One Answer per Wallet per Question:** Each wallet can submit only one answer per specific question per block (or per day, depending on the question's active window).
+    * **Re-attempt on Next Day:** Players can attempt the same question again on the following day if the question is still active.
+* **Mode Selection:** Each wallet can choose to play either Solo or Pool mode once per day and can select a different mode on the subsequent day.
+* **Block Reference:**
+    * **Block Speed:** Block speed is referenced from the Binance Smart Chain (BSC), which is approximately 3 blocks per second.
+    * **Question Duration (Levels 1-99):** Each question lasts for 60 blocks.
+    * **Question Duration (Level 100):** Level 100 questions have a duration of 28,800 blocks.
+
+### 2.3 Hint System
+* Players can purchase Hints (clues) to assist them in answering questions.
+* The cost of purchasing a Hint is transferred in QZC directly to the Diamond Contract's Treasury.
+
+### 2.4 Question Generation and Question Bank
+* Questions are generated by **Artificial Intelligence (AI)**, and the correct answers are **Hashed** for security.
+* **2.4.1 Question Bank:** A backup Question Bank is maintained to store questions in case of AI connectivity issues or malfunctions.
+    * For Level 1-99 questions: The bank stores approximately 3,504,000 questions, sufficient for 20 years.
+    * For Level 100 questions: The bank stores 7,300 questions.
+* **2.4.2 Question Categories:** All questions are exclusively in the **Science** and **Mathematics** categories.
+* Questions, answer choices, and correct answers stored in the Question Bank are all Hashed to ensure transparency and fairness.
+
+---
+
+## 3. Smart Contract Mechanisms and Roles (Current Structure)
+
+### 3.1 `QuizCoin.sol` (ERC-20 Token)
 * The official ERC-20 token for the QuizCoin game (QZC).
 * **No initial minting** in its constructor; `totalSupply` starts at 0.
 * Utilizes OpenZeppelin's `AccessControl` for role-based permissions.
 * Features a `MINTER_ROLE` that exclusively allows authorized entities to call the `mint()` function.
 * Exposes a `MINTER_ROLE()` function for external contracts to retrieve the role's bytes32 hash.
 
-### `PoolManager.sol`
+### 3.2 `PoolManager.sol`
 Serves as the central hub for managing QZC token minting and distribution, acting as an intermediary between the game logic (Facets) and the `QuizCoin` token.
 
-* `withdrawForUser(address _user, uint256 _amount)`:
-    * Called by the `QuizGameDiamond` (via a Facet).
-    * **Mints** new `_amount` of QZC and transfers it directly to the specified `_user` as a reward for solving a question.
-* `mintAndTransferToTreasury(uint256 _amount)`:
-    * Called by the `QuizGameDiamond` (via a Facet).
-    * **Mints** new `_amount` of QZC and transfers it to the `QuizGameDiamond` address (the Treasury).
-* `deposit(uint256 _amount)`:
-    * Primarily intended for administrative purposes or future mechanics where existing QZC needs to be transferred *into* the `PoolManager`.
-    * **Clarification:** `buyHint` fees are transferred directly to the Diamond Contract, so this function is *not* used for hint fee collection.
-* `setQuizGameDiamondAddress(address _newQuizGameDiamondAddress)`:
-    * Allows the `PoolManager` to recognize and authorize the `QuizGameDiamond` as the legitimate caller for minting and withdrawal functions.
+* `withdrawForUser(address _user, uint256 _amount)`: This function is called by the `QuizGameDiamond` (via a Facet) to **mint new tokens** of `_amount` and send them directly to the specified `_user` as a reward for solving a question.
+* `mintAndTransferToTreasury(uint256 _amount)`: This function is called by the `QuizGameDiamond` (via a Facet) to **mint new tokens** of `_amount` and transfer them to the `QuizGameDiamond` address (the Treasury).
+* `deposit(uint256 _amount)`: This function is called by the `QuizGameDiamond` (via a Facet) to receive `buyHint` fees (QZC paid by players), which the Diamond transfers to PoolManager for storage.
+    * **Clarification:** `buyHint` fees should be transferred directly from the player to the Diamond Contract. Therefore, the `deposit` function in `PoolManager` might not be necessary for hint fee collection, but it could still be used if an Admin wishes to manually transfer funds to the PoolManager for other purposes.
+* `setQuizGameDiamondAddress(address _newQuizGameDiamondAddress)`: Added to allow the `PoolManager` to recognize and authorize the `QuizGameDiamond` as the legitimate caller for minting and withdrawal functions.
 * **`MINTER_ROLE` Grant:** The `PoolManager` contract is granted the `MINTER_ROLE` on the `QuizCoin` token during the initialization process of the `QuizGameDiamond`.
 
-### `QuizGameDiamond.sol` (Diamond Proxy)
+### 3.3 `QuizGameDiamond.sol` (Diamond Proxy)
 The central, upgradeable proxy contract that users interact with. It delegates calls to various Facets.
 
 * Built with `UUPSUpgradeable` and `AccessControlUpgradeable` for upgradeability and robust role management.
-* **`initialize()` function:**
-    * Sets the initial `DEFAULT_ADMIN_ROLE` to the deployer.
-    * Crucially, it calls `QuizCoin.grantRole(QuizCoin.MINTER_ROLE(), PoolManager Address)` to empower `PoolManager` to mint tokens.
-    * It also calls `PoolManager.setQuizGameDiamondAddress(address(this))` to establish the trust relationship.
+* In its `initialize()` function:
+    * Grants `DEFAULT_ADMIN_ROLE` to the deployer.
+    * **Crucially:** Calls `QuizCoin.grantRole(QuizCoin.MINTER_ROLE(), PoolManager Address)` to empower `PoolManager` to mint QuizCoin tokens.
+    * Calls `PoolManager.setQuizGameDiamondAddress(address(this))` to establish the trust relationship with `PoolManager`.
 * **Treasury Role:** The `QuizGameDiamond` contract's address also serves as the main **Treasury address** where hint fees and the 0.5% reward fees are accumulated.
 
-### `LibAppStorage.sol` (Solidity Library)
+### 3.4 `LibAppStorage.sol` (Solidity Library)
 * Manages the `AppStorage` struct, which is the single source of truth for all persistent state variables of the QuizGame. All facets access this shared storage.
-* Stores crucial game constants such as `HINT_COST_AMOUNT`, `BLOCK_DURATION_SECONDS`, `HALVING_PERIOD_SECONDS`, and `MIN_REWARD_AFTER_HALVING`.
-* Includes `TREASURY_FEE_PERCENTAGE` (defined as `50` for 0.5% fee calculation, i.e., `amount * 50 / 10000`).
-* Contains the `_calculateCurrentReward()` function, which determines dynamic reward amounts, factoring in difficulty and the halving mechanism.
+* Stores essential game constants such as `HINT_COST_AMOUNT`, `BLOCK_DURATION_SECONDS`, `HALVING_PERIOD_SECONDS`, and `MIN_REWARD_AFTER_HALVING`.
+* Contains `TREASURY_FEE_PERCENTAGE` (defined as `50` for a 0.5% fee calculation, i.e., `amount * 50 / 10000`).
+* Includes the `_calculateCurrentReward()` function, which determines dynamic reward amounts, factoring in difficulty and the halving mechanism.
 
-### Facets (Modular Functionality)
-Each facet is a separate contract that implements specific game logic, attached to the `QuizGameDiamond` via `diamondCut` operations.
+### 3.5 `QuizGameModeFacet.sol`
+Manages the logic for creating questions (`createQuestion`) and submitting answers (`submitAnswer`).
 
-* **`QuizGameModeFacet.sol`:**
-    * Handles `createQuestion()`: Allows authorized creators to add new quiz questions.
-    * Manages `submitAnswer()`:
-        * **Solo Mode:** Calculates `totalReward`, then `treasuryFee` (0.5%). Calls `ds.poolManager.mintAndTransferToTreasury(treasuryFee)` and `ds.poolManager.withdrawForUser(msg.sender, rewardForSoloSolver)`.
-    * Implements `buyHint()`: Requires player `approve()` for the Diamond Contract. `HINT_COST_AMOUNT` is directly `transferFrom` player to the `Diamond Contract (address(this))`, funding the Treasury.
+* **3.5.1 In `submitAnswer` (Solo Mode):**
+    * Calculates `totalReward`.
+    * Calculates `treasuryFee = totalReward * 0.5%`.
+    * Calls `ds.poolManager.mintAndTransferToTreasury(treasuryFee)` (Mints tokens for the Treasury).
+    * Calls `ds.poolManager.withdrawForUser(msg.sender, rewardForSoloSolver)` (Mints remaining reward for the player).
+* **3.5.2 In `buyHint()`:**
+    * Players must first `approve` QuizCoin to the Diamond Contract Address.
+    * The `HINT_COST_AMOUNT` is `transferFrom` the player directly to the Diamond Contract (`address(this)`), meaning hint fees directly fund the Treasury.
 
-* **`QuizGameRewardFacet.sol`:**
-    * Manages `distributeRewards()`: Specifically for "Pool" mode questions after their reward window closes.
-    * Calculates `totalFinalReward`, then `treasuryFee` (0.5%). Calls `ds.poolManager.mintAndTransferToTreasury(treasuryFee)`.
-    * Distributes the remaining reward to all correct solvers in the pool by calling `ds.poolManager.withdrawForUser(solver, rewardPerSolver)`.
+### 3.6 `QuizGameRewardFacet.sol`
+Manages the logic for reward distribution in Pool Mode (`distributeRewards`).
 
----
+* **3.6.1 In `distributeRewards`:**
+    * Calculates `totalFinalReward`.
+    * Calculates `treasuryFee = totalFinalReward * 0.5%`.
+    * Calls `ds.poolManager.mintAndTransferToTreasury(treasuryFee)` (Mints tokens for the Treasury).
+    * Calculates `rewardPerSolver` from the remaining reward.
+    * Calls `ds.poolManager.withdrawForUser(solver, rewardPerSolver)` (Mints remaining reward for players in the Pool).
 
-### Summary of Treasury Fund Flow
-
-* **Hint Purchases:** QuizCoin (QZC) used for purchasing hints is transferred directly to the `QuizGameDiamond` contract (Treasury).
-    * *Reference:* `contracts/facets/QuizGameModeFacet.sol::buyHint`
-* **0.5% Reward Fee:** When rewards are calculated (for both Solo and Pool modes), 0.5% of the total reward is newly minted by the `PoolManager` and sent to the `QuizGameDiamond` contract (Treasury).
-    * *Reference:* `contracts/facets/QuizGameModeFacet.sol::submitAnswer`
-    * *Reference:* `contracts/facets/QuizGameRewardFacet.sol::distributeRewards`
+### 3.7 Summary of Treasury Fund Flow from Tokenomics:
+* **Hint Purchases:** QuizCoin used for purchasing hints is transferred directly to the Diamond Contract (which serves as the Treasury).
+    * *Reference:* `contracts\facets\QuizGameModeFacet.sol::buyHint`
+* **0.5% Reward Fee:** When rewards are calculated (for both Solo and Pool modes), 0.5% of the total reward is newly minted by the `PoolManager` and sent to the Diamond Contract (Treasury).
+    * *Reference:* `contracts\facets\QuizGameModeFacet.sol::submitAnswer`
+    * *Reference:* `contracts\facets\QuizGameRewardFacet.sol::distributeRewards`
