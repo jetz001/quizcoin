@@ -1,35 +1,64 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// ไม่ต้อง import IDiamondCut ใน Diamond.sol โดยตรง เพราะ Diamond.sol ไม่ได้ implement ทุกฟังก์ชันเอง
-// import {IDiamondCut} from "./interfaces/IDiamondCut.sol";
-import {LibDiamond} from "./libraries/LibDiamond.sol"; // ตรวจสอบพาธให้ถูกต้อง
+import {IDiamondCut} from "./interfaces/IDiamondCut.sol";
+import {LibDiamond} from "./libraries/LibDiamond.sol";
+import {IDiamondLoupe} from "./interfaces/IDiamondLoupe.sol";
+import {DiamondLoupeFacet} from "./facets/DiamondLoupeFacet.sol";
+import {DiamondCutFacet} from "./facets/DiamondCutFacet.sol";
 
-// Diamond Contract หลักที่ใช้ LibDiamond
-contract Diamond { // ลบ 'is IDiamondCut' ออกไป
-    constructor(address _owner, address _diamondCutFacet) payable {
-        // เรียกใช้ diamondCut จาก LibDiamond เพื่อตั้งค่าเริ่มต้น
-        // ฟังก์ชัน diamondCut นี้จะถูกเรียกผ่าน proxy ไปที่ _diamondCutFacet
+contract Diamond {
+    event DiamondCut(IDiamondCut.FacetCut[] _diamondCut, address _init, bytes _calldata);
+
+    constructor(address _owner) payable { // เปลี่ยนกลับมาใช้ _owner
+        DiamondCutFacet diamondCutFacet = new DiamondCutFacet();
+        DiamondLoupeFacet diamondLoupeFacet = new DiamondLoupeFacet();
+
+        // สร้าง dynamic array สำหรับ DiamondCutFacet selectors
+        bytes4[] memory diamondCutSelectors = new bytes4[](1);
+        diamondCutSelectors[0] = bytes4(keccak256("diamondCut((address,uint8,bytes4[])[],address,bytes)"));
+
+        // FacetCut สำหรับ DiamondCutFacet
+        IDiamondCut.FacetCut memory cutDiamondCutFacet = IDiamondCut.FacetCut({
+            facetAddress: address(diamondCutFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: diamondCutSelectors // ใช้ตัวแปร dynamic array ที่สร้างไว้
+        });
+
+        // สร้าง dynamic array สำหรับ DiamondLoupeFacet selectors
+        bytes4[] memory diamondLoupeSelectors = new bytes4[](4);
+        diamondLoupeSelectors[0] = bytes4(keccak256("facetAddresses()"));
+        diamondLoupeSelectors[1] = bytes4(keccak256("facetFunctionSelectors(address)"));
+        diamondLoupeSelectors[2] = bytes4(keccak256("facets()"));
+        diamondLoupeSelectors[3] = bytes4(keccak256("facetAddress(bytes4)"));
+
+        // FacetCut สำหรับ DiamondLoupeFacet
+        IDiamondCut.FacetCut memory cutDiamondLoupeFacet = IDiamondCut.FacetCut({
+            facetAddress: address(diamondLoupeFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: diamondLoupeSelectors // ใช้ตัวแปร dynamic array ที่สร้างไว้
+        });
+
+        IDiamondCut.FacetCut[] memory _diamondCut = new IDiamondCut.FacetCut[](2);
+        _diamondCut[0] = cutDiamondCutFacet;
+        _diamondCut[1] = cutDiamondLoupeFacet;
+
         LibDiamond.diamondCut(
-            new LibDiamond.FacetCut[](0), // ใช้ FacetCut จาก LibDiamond
-            _diamondCutFacet,
-            LibDiamond.getInitializationCalldata(_owner)
+            _diamondCut,
+            address(0),
+            ""
         );
+
+        emit DiamondCut(_diamondCut, address(0), "");
     }
 
-    // fallback function จะถูกเรียกเมื่อมีการเรียกใช้ selector ที่ไม่รู้จัก
     fallback() external payable {
         LibDiamond.DiamondStorage storage ds = LibDiamond.diamondStorage();
-        
-        // ใช้ ds.facetAddressAndSelectorPosition[msg.sig].facetAddress;
-        // เพราะตาม Diamond pattern ข้อมูลจะถูกจัดเก็บใน struct นั้น
         address facetAddress = ds.facetAddressAndSelectorPosition[msg.sig].facetAddress;
         require(facetAddress != address(0), "Diamond: Function does not exist");
-        
+
         assembly {
-            // กระโดดไปยัง facetAddress ที่ถูกต้อง
             calldatacopy(0, 0, calldatasize())
-            // ใช้ delegatecall เพื่อรันโค้ดของ facet ในบริบทของ Diamond
             let result := delegatecall(gas(), facetAddress, 0, calldatasize(), 0, 0)
             returndatacopy(0, 0, returndatasize())
             switch result
@@ -42,6 +71,5 @@ contract Diamond { // ลบ 'is IDiamondCut' ออกไป
         }
     }
 
-    // receive function จะถูกเรียกเมื่อมีการส่ง Ether โดยไม่มี calldata
     receive() external payable {}
 }
