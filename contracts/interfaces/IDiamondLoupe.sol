@@ -7,9 +7,8 @@ interface IDiamondLoupe {
         bytes4[] functionSelectors;
     }
 
-    function facets() external view returns (Facet[] memory _facets);
-
+    function facets() external view returns (Facet[] memory facets_);
     function facetFunctionSelectors(address _facet) external view returns (bytes4[] memory _selectors);
-
-    function facetAddress(bytes4 _selector) external view returns (address _facetAddress);
+    function facetAddresses() external view returns (address[] memory facetAddresses_);
+    function facetAddress(bytes4 _functionSelector) external view returns (address facetAddress_);
 }

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // Import Libraries และ Interfaces ที่จำเป็น
-import { LibAppStorage, QuestionMode, Question } from '../libraries/LibAppStorage.sol'; // เข้าถึง AppStorage และ Enums/Structs
+import { LibAppStorage } from '../libraries/LibAppStorage.sol'; // *** แก้ไขตรงนี้ ***
 import { AccessControlUpgradeable } from '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol'; // สำหรับใช้ Role
 
 // Import Interfaces สำหรับสัญญาภายนอก
@@ -28,7 +28,8 @@ contract QuizGameBaseFacet {
 
         // กำหนดค่าคงที่และเริ่มต้นตัวแปรเกม
         ds.HINT_COST_AMOUNT = 10 * 10**18; // 10 QuizCoin
-        ds.BLOCK_DURATION_SECONDS = 180; // 3 นาที
+        ds.POOL_REWARD_WINDOW_DURATION_SECONDS = 180; // 3 นาที สำหรับ Pool Mode
+        ds.LEVEL_100_QUESTION_VALIDITY_SECONDS = 24 * 60 * 60; // 1 วัน สำหรับคำถามระดับ 100
         ds.BASE_REWARD_FOR_LEVEL_99 = 5000 * 10**18; // 5000 QuizCoin
         ds.REWARD_FOR_LEVEL_100 = 10000 * 10**18; // 10000 QuizCoin
         ds.HALVING_PERIOD_SECONDS = 4 * 365 * 24 * 60 * 60; // 4 ปี
@@ -40,6 +41,7 @@ contract QuizGameBaseFacet {
     }
 
     // --- Events (ประกาศใน Facet นี้ หรือ Facet ที่เกี่ยวข้อง) ---
+    // Note: ใน Event การอ้างถึง Struct/Enum จาก Library ทำได้โดยตรง ไม่ต้องมี prefix เพราะมันคือ type
     event QuestionCreated(uint256 indexed questionId, address indexed creator, uint256 difficulty, uint256 baseReward);
     event HintPurchased(uint256 indexed questionId, address indexed buyer, uint256 cost);
     event AnswerSubmitted(uint256 indexed questionId, address indexed submitter, bytes32 submittedHash);

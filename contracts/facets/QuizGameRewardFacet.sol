@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 // Import เพื่อเข้าถึง AppStorage, Enums/Structs และ AccessControl
-import { LibAppStorage, QuestionMode, Question } from '../libraries/LibAppStorage.sol';
+import { LibAppStorage } from '../libraries/LibAppStorage.sol'; // *** แก้ไขตรงนี้ ***
 import { AccessControlUpgradeable } from '@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol';
 import '../interfaces/IPoolManager.sol';
 import '../interfaces/IQuizGameEvents.sol';
@@ -19,17 +19,31 @@ contract QuizGameRewardFacet is IQuizGameEvents {
             "AccessControl: Caller is not a reward distributor"
         );
 
-        Question storage question = ds.questions[_questionId];
+        LibAppStorage.Question storage question = ds.questions[_questionId]; // *** แก้ไขตรงนี้ ***
 
         require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
         require(!question.isClosed, "Quiz: Question is already closed.");
-        require(question.mode == QuestionMode.Pool, "Quiz: Reward distribution is only for Pool mode questions.");
+        require(question.mode == LibAppStorage.QuestionMode.Pool, "Quiz: Reward distribution is only for Pool mode questions."); // *** แก้ไขตรงนี้ ***
+        
+        // ตรวจสอบว่าคำถามยังไม่หมดอายุ (สำหรับ Level 100 Pool)
+        if (question.difficultyLevel == 100) {
+            require(block.timestamp <= question.blockCreationTime + ds.LEVEL_100_QUESTION_VALIDITY_SECONDS, "Quiz: Level 100 Pool question has expired, cannot distribute rewards.");
+        }
 
-        require(block.timestamp >= question.firstCorrectAnswerTime + ds.BLOCK_DURATION_SECONDS, "Quiz: Pool window is not over yet.");
+        // ตรวจสอบ Pool window โดยอิงตาม Difficulty Level
+        uint256 requiredTimePassed;
+        if (question.difficultyLevel == 100) {
+            requiredTimePassed = ds.LEVEL_100_QUESTION_VALIDITY_SECONDS; // ใช้ระยะเวลา 1 วัน
+             require(question.firstCorrectAnswerTime != 0, "Quiz: Level 100 Pool question has no first answer time recorded."); // Level 100 Pool ต้องมีคนตอบถูก
+        } else {
+            requiredTimePassed = ds.POOL_REWARD_WINDOW_DURATION_SECONDS; // ใช้ 3 นาที
+        }
+        
+        require(block.timestamp >= question.firstCorrectAnswerTime + requiredTimePassed, "Quiz: Pool window is not over yet.");
         require(question.poolCorrectSolvers.length > 0, "Quiz: No one answered correctly in Pool mode window.");
 
         // เรียกใช้ _calculateCurrentReward จาก LibAppStorage โดยตรง
-        uint256 totalFinalReward = LibAppStorage._calculateCurrentReward(ds, question.baseRewardAmount, question.difficultyLevel);
+        uint256 totalFinalReward = LibAppStorage._calculateCurrentReward(ds, question.difficultyLevel); // ใช้ difficultyLevel โดยตรง
 
         // คำนวณค่าธรรมเนียม 0.5%
         uint256 treasuryFee = (totalFinalReward * ds.TREASURY_FEE_PERCENTAGE) / 10000; // 0.5% = 50 / 10000

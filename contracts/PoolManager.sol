@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "../interfaces/IQuizCoin.sol"; // ใช้ IQuizCoin แทน IERC20
+import "./interfaces/IQuizCoin.sol"; // ใช้ IQuizCoin แทน IERC20
 
 contract PoolManager is Ownable {
     IQuizCoin public quizCoin; // ที่อยู่ของ QuizCoin Token (ใช้ IQuizCoin ของเราเอง)
