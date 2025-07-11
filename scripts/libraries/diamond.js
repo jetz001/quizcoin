@@ -1,53 +1,39 @@
-// scripts/libraries/diamond.js
+const { ethers } = require('hardhat');
 
-const { ethers } = require("hardhat");
-
-exports.FacetCutAction = {
-  Add: 0,
-  Replace: 1,
-  Remove: 2
+// FacetCutAction enum จาก IDiamondCut.sol
+const FacetCutAction = {
+    Add: 0,
+    Replace: 1,
+    Remove: 2
 };
 
 /**
- * @notice ดึง function selectors จาก ContractFactory หรือ Contract instance ที่ Deploy แล้ว
- * @param contractOrFactory ออบเจกต์ ContractFactory หรือ Contract instance
- * @returns อาร์เรย์ของ bytes4 selectors
+ * @notice Helper function to get all function selectors from a contract artifact or instance.
+ * @param contract The ContractFactory or Contract instance (ethers.js v6 compatible).
+ * @returns An array of bytes4 function selectors.
  */
-exports.getSelectors = (contractOrFactory) => {
-  const selectors = [];
-
-  if (!contractOrFactory || !contractOrFactory.interface) {
-    console.error("Error: Invalid contract object or missing 'interface' property passed to getSelectors.");
-    console.error("Received object:", contractOrFactory);
-    throw new Error("Invalid contract object for selector extraction.");
-  }
-
-  const abiFragments = contractOrFactory.interface.fragments;
-  if (!Array.isArray(abiFragments)) {
-    console.error("Error: 'interface.fragments' is not an array on the contract object.", contractOrFactory);
-    throw new Error("Invalid 'interface.fragments' for selector extraction.");
-  }
-
-  for (const fragment of abiFragments) {
-    if (fragment.type === 'function') {
-      // ใช้ ethers.id() เพื่อสร้าง full hash (bytes32)
-      const fullHash = ethers.id(fragment.format("sighash"));
-      // ตัด 4 ไบต์แรกเพื่อเป็น function selector (bytes4)
-      selectors.push(fullHash.substring(0, 10)); // "0x" + 8 hex chars = 10 characters
+function getSelectors (contract) {
+    if (!contract || !contract.interface || !Array.isArray(contract.interface.fragments)) {
+        console.error("Error: Invalid contract object or missing interface/fragments for getSelectors.");
+        throw new Error("Invalid contract object passed to getSelectors.");
     }
-  }
-  return selectors;
-};
 
-/**
- * @notice ดึง function selectors ทั้งหมดจากอาร์เรย์ของ Facet objects
- * @param facets อาร์เรย์ของ Facet objects (เช่น FacetFactory หรือ deployed Facet instances)
- * @returns อาร์เรย์ของ bytes4 selectors ทั้งหมด
- */
-exports.getSelectorsFromFacets = (facets) => {
-  let selectors = [];
-  for (const facet of facets) {
-    selectors = selectors.concat(exports.getSelectors(facet));
-  }
-  return selectors;
-};
+    const selectors = contract.interface.fragments.reduce((acc, val) => {
+        if (val.type === 'function') {
+            if (val.format() !== 'constructor' && val.format() !== 'fallback' && val.format() !== 'receive') {
+                acc.push(val.selector); // ใช้ val.selector สำหรับ ethers.js v6
+            }
+        }
+        return acc;
+    }, []);
+    return selectors;
+}
+
+// ฟังก์ชันสำหรับดึงเฉพาะ function selectors ที่ต้องการ (ไม่จำเป็นต้องใช้ใน deploy.js นี้ แต่มีไว้เผื่อ)
+function getSelector (funcName) {
+    return ethers.id(funcName).slice(0, 10);
+}
+
+exports.getSelectors = getSelectors;
+exports.FacetCutAction = FacetCutAction;
+exports.getSelector = getSelector;
