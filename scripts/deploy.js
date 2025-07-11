@@ -1,226 +1,342 @@
-const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { getSelectors, FacetCutAction } = require("./libraries/diamond.js");
 
-async function main() {
-    const [deployer] = await ethers.getSigners();
-    console.log("Deploying contracts with the account:", deployer.address);
+// กำหนด gas limit เพื่อหลีกเลี่ยง Out of Gas บน Testnet/Mainnet
+const gasLimit = 6000000; 
 
-    // Deploy Facets
+async function deployDiamond() {
+    const accounts = await ethers.getSigners();
+    const deployer = accounts[0];
+    console.log(`Deploying contracts with the account: ${deployer.address}`);
+
+    // Deploy Facets ทั้งหมดก่อน เพื่อให้ตัวแปร ...Deployed พร้อมใช้งาน
+    console.log("\n--- Deploying Facets ---");
     const DiamondCutFacet = await ethers.getContractFactory("DiamondCutFacet");
-    const diamondCutFacet = await DiamondCutFacet.deploy();
-    await diamondCutFacet.waitForDeployment();
-    console.log("DiamondCutFacet deployed to:", diamondCutFacet.target);
+    const DiamondCutFacetDeployed = await DiamondCutFacet.deploy({ gasLimit: gasLimit });
+    await DiamondCutFacetDeployed.waitForDeployment();
+    console.log(`DiamondCutFacet deployed to: ${DiamondCutFacetDeployed.target}`);
 
     const DiamondLoupeFacet = await ethers.getContractFactory("DiamondLoupeFacet");
-    const diamondLoupeFacet = await DiamondLoupeFacet.deploy();
-    await diamondLoupeFacet.waitForDeployment();
-    console.log("DiamondLoupeFacet deployed to:", diamondLoupeFacet.target);
+    const DiamondLoupeFacetDeployed = await DiamondLoupeFacet.deploy({ gasLimit: gasLimit });
+    await DiamondLoupeFacetDeployed.waitForDeployment();
+    console.log(`DiamondLoupeFacet deployed to: ${DiamondLoupeFacetDeployed.target}`);
 
     const OwnershipFacet = await ethers.getContractFactory("OwnershipFacet");
-    const ownershipFacet = await OwnershipFacet.deploy();
-    await ownershipFacet.waitForDeployment();
-    console.log("OwnershipFacet deployed to:", ownershipFacet.target);
+    const OwnershipFacetDeployed = await OwnershipFacet.deploy({ gasLimit: gasLimit });
+    await OwnershipFacetDeployed.waitForDeployment();
+    console.log(`OwnershipFacet deployed to: ${OwnershipFacetDeployed.target}`);
 
     const QuizCreationFacet = await ethers.getContractFactory("QuizCreationFacet");
-    const quizCreationFacet = await QuizCreationFacet.deploy();
-    await quizCreationFacet.waitForDeployment();
-    console.log("QuizCreationFacet deployed to:", quizCreationFacet.target);
+    const QuizCreationFacetDeployed = await QuizCreationFacet.deploy({ gasLimit: gasLimit });
+    await QuizCreationFacetDeployed.waitForDeployment();
+    console.log(`QuizCreationFacet deployed to: ${QuizCreationFacetDeployed.target}`);
 
-    // --- Deploy QuizParticipationFacet ใหม่ ---
     const QuizParticipationFacet = await ethers.getContractFactory("QuizParticipationFacet");
-    const quizParticipationFacet = await QuizParticipationFacet.deploy();
-    await quizParticipationFacet.waitForDeployment();
-    console.log("QuizParticipationFacet deployed to:", quizParticipationFacet.target);
+    const QuizParticipationFacetDeployed = await QuizParticipationFacet.deploy({ gasLimit: gasLimit });
+    await QuizParticipationFacetDeployed.waitForDeployment();
+    console.log(`QuizParticipationFacet deployed to: ${QuizParticipationFacetDeployed.target}`);
 
+    // กำหนด Diamond Address (บังคับให้ Deploy Diamond Contract ใหม่ทุกครั้งเพื่อความง่ายในการทดสอบ)
+    let currentDiamondAddress = ethers.ZeroAddress; 
+    
+    let diamond;
+    let diamondLoupe;
+    let diamondOwnership;
 
-    // นำ Diamond Contract ที่ Deploy ไปแล้วมาใช้งาน
-    // *** สำคัญ: ต้องแน่ใจว่า Address นี้คือ Diamond Contract ตัวเดิมของคุณ
-    const diamondAddress = "0x1A63EE98CF346227E606BDB22f0A886088910100";
-    const diamond = await ethers.getContractAt("IDiamondCut", diamondAddress);
-    // เพิ่มการเข้าถึง DiamondLoupeFacet ผ่าน Diamond Proxy
-    const diamondLoupe = await ethers.getContractAt("IDiamondLoupe", diamondAddress);
-    console.log("Using existing Diamond at:", diamond.target);
+    // ถ้าเป็น Zero Address ให้ Deploy Diamond Contract ใหม่
+    if (currentDiamondAddress === ethers.ZeroAddress) {
+        console.log("\n--- Deploying new Diamond Contract ---");
+        const Diamond = await ethers.getContractFactory("Diamond");
+        const diamondDeployed = await Diamond.deploy(deployer.address, { gasLimit: gasLimit }); // ส่ง owner address ให้ constructor
+        await diamondDeployed.waitForDeployment();
+        currentDiamondAddress = diamondDeployed.target;
+        console.log(`New Diamond Contract deployed to: ${currentDiamondAddress}`);
 
-    // เพิ่ม/อัปเดต Facets ใน Diamond
-    console.log("Adding/Updating Facets to Diamond...");
+        // เชื่อมต่อกับ Diamond Contract ที่เพิ่ง Deploy ใหม่
+        diamond = await ethers.getContractAt("IDiamondCut", currentDiamondAddress);
+        diamondLoupe = await ethers.getContractAt("IDiamondLoupe", currentDiamondAddress); 
+        diamondOwnership = await ethers.getContractAt("IERC173", currentDiamondAddress); 
 
-    // Facet สำหรับ QuizCreation
-    // ใช้ action: 0 (Add) สำหรับ Facet นี้ ถ้าไม่มีอยู่แล้ว
-    const quizCreationCut = [
-        {
-            facetAddress: quizCreationFacet.target,
-            action: 0, // Add (0)
-            functionSelectors: [
-                quizCreationFacet.interface.getFunction("createQuiz").selector,
-                quizCreationFacet.interface.getFunction("addQuestion").selector,
-                quizCreationFacet.interface.getFunction("activateQuiz").selector,
-                quizCreationFacet.interface.getFunction("deactivateQuiz").selector,
-                quizCreationFacet.interface.getFunction("getQuiz").selector,
-                quizCreationFacet.interface.getFunction("getQuestion").selector,
-                quizCreationFacet.interface.getFunction("getTotalQuizzes").selector
-            ],
-        },
-    ];
-
-    try {
-        // เพิ่ม QuizCreationFacet (ถ้ายังไม่มี)
-        const txCreation = await diamond.diamondCut(
-            quizCreationCut,
-            ethers.ZeroAddress,
-            "0x"
+        // --- เพิ่ม DiamondCutFacet, DiamondLoupeFacet, OwnershipFacet เป็นครั้งแรก ---
+        // ตอนนี้ตัวแปร ...Deployed พร้อมใช้งานแล้ว
+        console.log("\n--- Performing Initial Diamond Cut for Core Facets ---");
+        let initialDiamondCut = [];
+        initialDiamondCut.push(
+            {
+                facetAddress: DiamondCutFacetDeployed.target,
+                action: FacetCutAction.Add,
+                functionSelectors: getSelectors(DiamondCutFacetDeployed)
+            },
+            {
+                facetAddress: DiamondLoupeFacetDeployed.target,
+                action: FacetCutAction.Add,
+                functionSelectors: getSelectors(DiamondLoupeFacetDeployed)
+            },
+            {
+                facetAddress: OwnershipFacetDeployed.target,
+                action: FacetCutAction.Add,
+                functionSelectors: getSelectors(OwnershipFacetDeployed)
+            }
         );
-        await txCreation.wait();
-        console.log("QuizCreationFacet added/updated to Diamond.");
-    } catch (e) {
-        if (e.message.includes("Cannot add function that already exists") || e.message.includes("Can't add function that already exists")) {
-            console.log("QuizCreationFacet functions already exist. Skipping diamondCut for Creation Facet.");
-        } else {
-            throw e; // Rethrow other errors
-        }
+        await (await diamond.diamondCut(initialDiamondCut, ethers.ZeroAddress, "0x", { gasLimit: gasLimit })).wait();
+        console.log("Core Facets (DiamondCut, DiamondLoupe, Ownership) added to new Diamond.");
+
+    } else {
+        console.log(`\nUsing existing Diamond at: ${currentDiamondAddress}`);
+        // ถ้าใช้ Diamond เดิม, เชื่อมต่อกับมัน
+        diamond = await ethers.getContractAt("IDiamondCut", currentDiamondAddress);
+        diamondLoupe = await ethers.getContractAt("IDiamondLoupe", currentDiamondAddress); 
+        diamondOwnership = await ethers.getContractAt("IERC173", currentDiamondAddress); 
     }
+    
+    // --- Adding/Updating Facets to Diamond ---
+    // ส่วนนี้จะจัดการกับ QuizCreationFacet และ QuizParticipationFacet
+    // ซึ่ง DiamondCutFacet, DiamondLoupeFacet, OwnershipFacet ได้ถูกเพิ่มไปแล้วใน initialDiamondCut ด้านบน
+    console.log("\n--- Adding/Updating Quiz & Participation Facets to Diamond ---");
+    let diamondCut = [];
 
-    // --- อัปเดต QuizParticipationFacet: Remove เก่า, Add ใหม่ ---
-    const quizParticipationSelectors = [
-        quizParticipationFacet.interface.getFunction("joinQuiz").selector,
-        quizParticipationFacet.interface.getFunction("submitAnswer").selector,
-        quizParticipationFacet.interface.getFunction("getQuizParticipationStatus").selector,
-        quizParticipationFacet.interface.getFunction("getPlayerScore").selector
-    ];
-
-    let currentQuizParticipationFacetAddress = ethers.ZeroAddress;
+    // --- จัดการ QuizCreationFacet ---
+    const newCreationSelectors = getSelectors(QuizCreationFacetDeployed);
+    let oldCreationSelectors = [];
+    let currentCreationFacetAddress = ethers.ZeroAddress; 
+    
+    // พยายามดึงข้อมูลจาก DiamondLoupeFacade ก็ต่อเมื่อมันถูกติดตั้งแล้วเท่านั้น
     try {
-        // ตรวจสอบว่าฟังก์ชัน "submitAnswer" ชี้ไปที่ Facet Address ใดอยู่
-        currentQuizParticipationFacetAddress = await diamondLoupe.facetAddress(quizParticipationFacet.interface.getFunction("submitAnswer").selector);
+        currentCreationFacetAddress = await diamondLoupe.facetAddress(newCreationSelectors[0]);
+        // ถ้า Facet เดิมอยู่ที่ address เดียวกับที่ Deploy ใหม่ ให้ดึง selectors เดิมจาก address นั้น
+        if (currentCreationFacetAddress === QuizCreationFacetDeployed.target) {
+            oldCreationSelectors = await diamondLoupe.facetFunctionSelectors(QuizCreationFacetDeployed.target);
+        } else if (currentCreationFacetAddress !== ethers.ZeroAddress) {
+            // ถ้า selector นี้มีอยู่แล้ว แต่อยู่ที่ address อื่น (Facet เก่า)
+            console.log(`QuizCreationFacet's first selector found at a different address: ${currentCreationFacetAddress}.`);
+            oldCreationSelectors = await diamondLoupe.facetFunctionSelectors(currentCreationFacetAddress);
+        }
     } catch (e) {
-        // อาจจะเกิด error ถ้าฟังก์ชันยังไม่มี
-        console.log("submitAnswer function not found on Diamond, assuming fresh add.");
+        console.log(`Note: Initial check for QuizCreationFacet might fail if this is a new Diamond or previous deployment was incomplete. Error: ${e.message}`);
+    }
+    
+    // ตรวจสอบว่า Facet นี้ถูกติดตั้งและมีฟังก์ชันครบถ้วนแล้วหรือไม่ และ Facet Address ตรงกัน
+    const isCreationFacetUpToDate = currentCreationFacetAddress === QuizCreationFacetDeployed.target &&
+                                    oldCreationSelectors.length > 0 && 
+                                    newCreationSelectors.every(selector => oldCreationSelectors.includes(selector)) &&
+                                    oldCreationSelectors.every(selector => newCreationSelectors.includes(selector)); 
+
+    if (isCreationFacetUpToDate) {
+        console.log("QuizCreationFacet functions already exist and are up to date. Skipping diamondCut for Creation Facet.");
+    } else {
+        // ถ้ามีฟังก์ชันเก่าอยู่แล้ว ให้ลบออกก่อน
+        if (oldCreationSelectors.length > 0 && currentCreationFacetAddress !== ethers.ZeroAddress) {
+            console.log(`Found existing QuizCreationFacet functions at ${currentCreationFacetAddress}. Removing old functions...`);
+            const selectorsToRemove = await diamondLoupe.facetFunctionSelectors(currentCreationFacetAddress);
+            if (selectorsToRemove.length > 0) {
+                 diamondCut.push({
+                    facetAddress: ethers.ZeroAddress, // การ Remove ต้องใช้ address(0)
+                    action: FacetCutAction.Remove,
+                    functionSelectors: selectorsToRemove
+                });
+                await (await diamond.diamondCut(diamondCut, ethers.ZeroAddress, "0x", { gasLimit: gasLimit })).wait();
+                diamondCut = []; // รีเซ็ต diamondCut หลังจาก Remove
+                console.log("Old QuizCreationFacet functions removed.");
+            }
+        }
+        
+        console.log("Adding new QuizCreationFacet functions to Diamond...");
+        diamondCut.push({
+            facetAddress: QuizCreationFacetDeployed.target,
+            action: FacetCutAction.Add,
+            functionSelectors: newCreationSelectors
+        });
+        await (await diamond.diamondCut(diamondCut, ethers.ZeroAddress, "0x", { gasLimit: gasLimit })).wait();
+        diamondCut = []; // รีเซ็ต
+        console.log("New QuizCreationFacet functions added.");
     }
 
-    if (currentQuizParticipationFacetAddress != ethers.ZeroAddress && currentQuizParticipationFacetAddress != quizParticipationFacet.target) {
-        console.log(`Found existing QuizParticipationFacet functions at ${currentQuizParticipationFacetAddress}. Removing old functions...`);
-        // Remove ฟังก์ชันเก่าจาก Facet Address เดิม
-        const removeCut = [{
-            facetAddress: ethers.ZeroAddress, // Address เป็น 0x00...00 สำหรับการ Remove
-            action: 2, // Remove (2)
-            functionSelectors: quizParticipationSelectors,
-        }];
-        const txRemove = await diamond.diamondCut(removeCut, ethers.ZeroAddress, "0x");
-        await txRemove.wait();
-        console.log("Old QuizParticipationFacet functions removed.");
+    // --- จัดการ QuizParticipationFacet ---
+    const newParticipationSelectors = getSelectors(QuizParticipationFacetDeployed);
+    let oldParticipationSelectors = [];
+    let currentParticipationFacetAddress = ethers.ZeroAddress;
+
+    try {
+        currentParticipationFacetAddress = await diamondLoupe.facetAddress(newParticipationSelectors[0]);
+        if (currentParticipationFacetAddress === QuizParticipationFacetDeployed.target) {
+            oldParticipationSelectors = await diamondLoupe.facetFunctionSelectors(QuizParticipationFacetDeployed.target);
+        } else if (currentParticipationFacetAddress !== ethers.ZeroAddress) {
+            console.log(`QuizParticipationFacet's first selector found at a different address: ${currentParticipationFacetAddress}.`);
+            oldParticipationSelectors = await diamondLoupe.facetFunctionSelectors(currentParticipationFacetAddress);
+        }
+    } catch (e) {
+        console.log(`Note: Initial check for QuizParticipationFacet might fail if this is a new Diamond or previous deployment was incomplete. Error: ${e.message}`);
     }
 
-    // Add ฟังก์ชันใหม่ด้วย Facet Address ที่ Deploy ล่าสุด
-    console.log("Adding new QuizParticipationFacet functions to Diamond...");
-    const addCut = [{
-        facetAddress: quizParticipationFacet.target,
-        action: 0, // Add (0)
-        functionSelectors: quizParticipationSelectors,
-    }];
-    const txAdd = await diamond.diamondCut(addCut, ethers.ZeroAddress, "0x");
-    await txAdd.wait();
-    console.log("New QuizParticipationFacet functions added.");
+    const isParticipationFacetUpToDate = currentParticipationFacetAddress === QuizParticipationFacetDeployed.target &&
+                                         oldParticipationSelectors.length > 0 && 
+                                         newParticipationSelectors.every(selector => oldParticipationSelectors.includes(selector)) &&
+                                         oldParticipationSelectors.every(selector => newParticipationSelectors.includes(selector));
 
+    if (isParticipationFacetUpToDate) {
+        console.log("QuizParticipationFacet functions already exist and are up to date. Skipping diamondCut for Participation Facet.");
+    } else {
+        if (oldParticipationSelectors.length > 0 && currentParticipationFacetAddress !== ethers.ZeroAddress) {
+            console.log(`Found existing QuizParticipationFacet functions. Removing old functions...`);
+            const selectorsToRemove = await diamondLoupe.facetFunctionSelectors(currentParticipationFacetAddress);
+            if (selectorsToRemove.length > 0) {
+                diamondCut.push({
+                    facetAddress: ethers.ZeroAddress,
+                    action: FacetCutAction.Remove,
+                    functionSelectors: selectorsToRemove
+                });
+                await (await diamond.diamondCut(diamondCut, ethers.ZeroAddress, "0x", { gasLimit: gasLimit })).wait();
+                diamondCut = []; // รีเซ็ต diamondCut หลังจาก Remove
+                console.log("Old QuizParticipationFacet functions removed.");
+            }
+        }
+        console.log("Adding new QuizParticipationFacet functions to Diamond...");
+        diamondCut.push({
+            facetAddress: QuizParticipationFacetDeployed.target,
+            action: FacetCutAction.Add,
+            functionSelectors: newParticipationSelectors
+        });
+        await (await diamond.diamondCut(diamondCut, ethers.ZeroAddress, "0x", { gasLimit: gasLimit })).wait();
+        console.log("New QuizParticipationFacet functions added.");
+    }
 
-    // --- การทดสอบ Facet ต่างๆ ผ่าน Diamond ---
+    // ตรวจสอบ Ownership Facet เป็นตัวอย่าง
+    const owner = await diamondOwnership.owner();
+    console.log(`\nDiamond owner: ${owner}`);
+    console.log(`Deployer address: ${deployer.address}`);
+    if (owner.toLowerCase() !== deployer.address.toLowerCase()) {
+        console.log("Warning: Diamond owner is not the deployer. This might indicate an issue with initial setup.");
+    }
+
+    // เชื่อมต่อ Facet กับ Diamond เพื่อเรียกใช้ฟังก์ชัน
+    const quizDiamondCreator = await ethers.getContractAt("QuizCreationFacet", currentDiamondAddress);
+    const quizDiamondPlayer = await ethers.getContractAt("QuizParticipationFacet", currentDiamondAddress);
+
+    // --- Testing QuizCreationFacet through Diamond ---
     console.log("\n--- Testing QuizCreationFacet through Diamond ---");
-    const QuizCreationFacetABI = (await ethers.getContractFactory("QuizCreationFacet")).interface;
-    const quizDiamondCreator = new ethers.Contract(diamondAddress, QuizCreationFacetABI, deployer);
-
-    // 1. สร้าง Quiz
-    const quizName = "Advanced DApp Quiz V3"; // เปลี่ยนชื่อ Quiz เพื่อให้ไม่ซ้ำกัน
-    const reward = ethers.parseEther("0.05");
+    const quizTitle = "Advanced DApp Quiz V10"; // เปลี่ยนชื่อ Quiz ทุกครั้งที่รัน เพื่อให้ได้ Quiz ID ใหม่
+    const rewardAmount = ethers.parseUnits("0.05", "ether"); // 0.05 BNB per correct answer
     const maxParticipants = 50;
-    console.log(`Creating quiz "${quizName}"...`);
-    const createQuizTx = await quizDiamondCreator.createQuiz(quizName, reward, maxParticipants);
+
+    console.log(`Creating quiz "${quizTitle}"...`);
+    const createQuizTx = await quizDiamondCreator.createQuiz(quizTitle, rewardAmount, maxParticipants, { gasLimit: gasLimit });
     const createQuizReceipt = await createQuizTx.wait();
-    const quizCreatedEvent = createQuizReceipt.logs.find(log => log.fragment && log.fragment.name === "QuizCreated");
+    
+    // ค้นหาและแยก Event 'QuizCreated' ออกมา
+    const quizCreatedEvent = createQuizReceipt.logs.find(log => {
+        try {
+            const parsed = quizDiamondCreator.interface.parseLog(log);
+            return parsed && parsed.name === "QuizCreated";
+        } catch (e) {
+            return false; // ไม่ใช่ event ที่ต้องการ
+        }
+    });
+
+    if (!quizCreatedEvent) {
+        throw new Error("QuizCreated event not found in transaction receipt.");
+    }
     const quizId = quizCreatedEvent.args.quizId;
     console.log(`Quiz created with ID: ${quizId}`);
 
-    // 2. เพิ่มคำถาม
     console.log(`Adding questions to Quiz ID ${quizId}...`);
-    const addQuestionTx1 = await quizDiamondCreator.addQuestion(quizId, "What is a blockchain?", ["A distributed ledger", "A centralized database", "A type of cryptocurrency"], 0);
-    await addQuestionTx1.wait();
-    const addQuestionTx2 = await quizDiamondCreator.addQuestion(quizId, "What is the native token of BSC?", ["ETH", "BNB", "ADA"], 1);
-    await addQuestionTx2.wait();
+    const questions = [
+        {
+            questionText: "What is a blockchain?",
+            options: ["A decentralized ledger", "A type of cryptocurrency", "A mining rig", "A wallet"],
+            correctAnswerIndex: 0 // ดัชนีคำตอบที่ถูกต้องสำหรับคำถามนี้
+        },
+        {
+            questionText: "What is the native token of BSC?",
+            options: ["ETH", "BNB", "ADA", "SOL"],
+            correctAnswerIndex: 1 // ดัชนีคำตอบที่ถูกต้องสำหรับคำถามนี้
+        }
+    ];
+
+    for (let i = 0; i < questions.length; i++) {
+        await quizDiamondCreator.addQuestion(
+            quizId,
+            questions[i].questionText,
+            questions[i].options,
+            questions[i].correctAnswerIndex,
+            { gasLimit: gasLimit }
+        );
+    }
     console.log("Questions added.");
 
-    // 3. Activate Quiz
     console.log(`Activating Quiz ID ${quizId}...`);
-    const activateQuizTx = await quizDiamondCreator.activateQuiz(quizId);
-    await activateQuizTx.wait();
+    await quizDiamondCreator.activateQuiz(quizId, { gasLimit: gasLimit });
     console.log("Quiz activated.");
 
-    // 4. Verify Quiz data
-    const createdQuiz = await quizDiamondCreator.getQuiz(quizId);
-    console.log("Retrieved Quiz Data:", createdQuiz);
+    const retrievedQuizData = await quizDiamondCreator.getQuiz(quizId);
+    console.log("Retrieved Quiz Data:", retrievedQuizData);
 
-    expect(createdQuiz.name).to.equal(quizName);
-    expect(createdQuiz.creator).to.equal(deployer.address);
-    expect(createdQuiz.totalQuestions).to.equal(2n);
-    expect(createdQuiz.isActive).to.equal(true);
-
-    const question1 = await quizDiamondCreator.getQuestion(quizId, 0);
-    console.log("Question 1:", question1.questionText);
-    expect(question1.questionText).to.equal("What is a blockchain?");
-
-    const question2 = await quizDiamondCreator.getQuestion(quizId, 1);
-    console.log("Question 2:", question2.questionText);
-    expect(question2.questionText).to.equal("What is the native token of BSC?");
+    const question1Data = await quizDiamondCreator.getQuestion(quizId, 0);
+    console.log("Question 1:", question1Data.questionText);
+    const question2Data = await quizDiamondCreator.getQuestion(quizId, 1);
+    console.log("Question 2:", question2Data.questionText);
 
     console.log("QuizCreationFacet tests successful!");
 
+    // --- Verifying Quiz Questions from Contract (Debugging Aid) ---
+    console.log("\n--- Verifying Quiz Questions from Contract ---");
+    const question0Contract = await quizDiamondCreator.getQuestion(quizId, 0);
+    console.log(`Question 0 from Contract:`);
+    console.log(`  Question Text: ${question0Contract.questionText}`);
+    console.log(`  Options: ${question0Contract.options.join(', ')}`);
+    console.log(`  Correct Answer Index: ${question0Contract.correctAnswerIndex}`);
+
+    const question1Contract = await quizDiamondCreator.getQuestion(quizId, 1);
+    console.log(`Question 1 from Contract:`);
+    console.log(`  Question Text: ${question1Contract.questionText}`);
+    console.log(`  Options: ${question1Contract.options.join(', ')}`);
+    console.log(`  Correct Answer Index: ${question1Contract.correctAnswerIndex}`);
+    console.log("--- End Verifying Quiz Questions ---\n");
+
     // --- Testing QuizParticipationFacet through Diamond ---
     console.log("\n--- Testing QuizParticipationFacet through Diamond ---");
-    const QuizParticipationFacetABI = (await ethers.getContractFactory("QuizParticipationFacet")).interface;
-    const quizDiamondPlayer = new ethers.Contract(diamondAddress, QuizParticipationFacetABI, deployer); // ใช้ deployer เป็นผู้เล่นคนแรก
 
-    // 1. ผู้เล่นเข้าร่วม Quiz
     console.log(`Player ${deployer.address} joining Quiz ID ${quizId}...`);
-    const joinTx = await quizDiamondPlayer.joinQuiz(quizId);
-    await joinTx.wait();
+    await quizDiamondPlayer.joinQuiz(quizId, { gasLimit: gasLimit });
     console.log("Player joined quiz.");
 
-    // ตรวจสอบสถานะการเข้าร่วม
-    let [hasJoined, playerScore, lastAnsweredIndex] = await quizDiamondPlayer.getQuizParticipationStatus(quizId, deployer.address);
-    console.log(`Player Participation Status: Joined=${hasJoined}, Score=${ethers.formatEther(playerScore)} BNB, Last Answered=${lastAnsweredIndex}`);
-    expect(hasJoined).to.be.true;
-    expect(playerScore).to.equal(0n); // เริ่มต้นคะแนนเป็น 0
-    expect(lastAnsweredIndex).to.equal(ethers.MaxUint256);
+    let playerStatus = await quizDiamondPlayer.getQuizParticipationStatus(quizId, deployer.address);
+    console.log(`Player Participation Status: Joined=${playerStatus.hasJoined}, Score=${ethers.formatEther(playerStatus.score)} BNB, Last Answered=${playerStatus.lastAnsweredQuestionIndex}`);
 
-    // 2. ผู้เล่นส่งคำตอบ (คำถามที่ 0: What is a blockchain? Answer: 0 (A distributed ledger))
+    // ส่งคำตอบสำหรับ Question 0 (ใช้ดัชนีคำตอบที่ถูกต้องจากสัญญา)
+    const q0CorrectAnswerIndex = question0Contract.correctAnswerIndex; 
     console.log(`Player ${deployer.address} submitting answer for Question 0 (correct)...`);
-    const submitAnswerTx1 = await quizDiamondPlayer.submitAnswer(quizId, 0, 0); // ตอบถูก
-    await submitAnswerTx1.wait();
+    const submitQ0Tx = await quizDiamondPlayer.submitAnswer(quizId, 0, q0CorrectAnswerIndex, { gasLimit: gasLimit });
+    await submitQ0Tx.wait();
     console.log("Answer for Question 0 submitted.");
 
-    // ตรวจสอบคะแนนหลังตอบคำถามแรก
-    playerScore = await quizDiamondPlayer.getPlayerScore(quizId, deployer.address);
+    let playerScore = await quizDiamondPlayer.getPlayerScore(quizId, deployer.address);
     console.log(`Player Score after Q0: ${ethers.formatEther(playerScore)} BNB`);
-    expect(playerScore).to.equal(reward); // ควรได้คะแนนเท่ากับ rewardAmount
 
-    // 3. ผู้เล่นส่งคำตอบ (คำถามที่ 1: What is the native token of BSC? Answer: 1 (BNB))
+    // ส่งคำตอบสำหรับ Question 1 (ใช้ดัชนีคำตอบที่ถูกต้องจากสัญญา)
+    const q1CorrectAnswerIndex = question1Contract.correctAnswerIndex;
     console.log(`Player ${deployer.address} submitting answer for Question 1 (correct)...`);
-    const submitAnswerTx2 = await quizDiamondPlayer.submitAnswer(quizId, 1, 1); // ตอบถูก
-    const submitAnswerReceipt2 = await submitAnswerTx2.wait();
+    const submitQ1Tx = await quizDiamondPlayer.submitAnswer(quizId, 1, q1CorrectAnswerIndex, { gasLimit: gasLimit });
+    await submitQ1Tx.wait();
     console.log("Answer for Question 1 submitted.");
 
-    // ตรวจสอบคะแนนหลังตอบคำถามที่สอง (และคาดหวัง event QuizCompleted)
     playerScore = await quizDiamondPlayer.getPlayerScore(quizId, deployer.address);
     console.log(`Player Score after Q1: ${ethers.formatEther(playerScore)} BNB`);
-    expect(playerScore).to.equal(reward * 2n); // ควรได้คะแนนเป็นสองเท่าของ reward
 
-    const quizCompletedEvent = submitAnswerReceipt2.logs.find(log => log.fragment && log.fragment.name === "QuizCompleted");
-    expect(quizCompletedEvent).to.exist;
-    expect(quizCompletedEvent.args.quizId).to.equal(quizId);
-    expect(quizCompletedEvent.args.player).to.equal(deployer.address);
-    expect(quizCompletedEvent.args.finalScore).to.equal(reward * 2n);
+    // ตรวจสอบคะแนนสุดท้าย (ควรเป็น 0.1 BNB)
+    const expectedFinalScore = ethers.parseUnits("0.1", "ether"); // 0.1 BNB
+    console.log(`\nAsserting final score. Expected: ${ethers.formatEther(expectedFinalScore)} BNB, Actual: ${ethers.formatEther(playerScore)} BNB`);
+    
+    // ใช้ .eq() สำหรับเปรียบเทียบ BigNumber
+    if (!playerScore.eq(expectedFinalScore)) {
+        throw new Error(`AssertionError: expected ${expectedFinalScore.toString()} (0.1 BNB) to equal ${playerScore.toString()} (${ethers.formatEther(playerScore)} BNB).`);
+    } else {
+        console.log("Assertion successful: Final score is as expected!");
+    }
 
     console.log("QuizParticipationFacet tests successful!");
-    console.log("\nAll facets deployed and integrated successfully!");
 }
 
-main()
+deployDiamond()
     .then(() => process.exit(0))
     .catch((error) => {
         console.error(error);

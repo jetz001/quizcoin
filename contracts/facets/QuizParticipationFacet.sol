@@ -5,7 +5,7 @@ import {LibDiamond} from "../libraries/LibDiamond.sol";
 import {LibQuizStorage} from "../libraries/LibQuizStorage.sol";
 import {IERC173} from "../interfaces/IERC173.sol";
 import {Quiz, Question} from "../QuizTypes.sol"; // Import the shared structs
-import "hardhat/console.sol"; // <<< ADDED: Import hardhat/console for logging
+// ไม่ต้อง import "hardhat/console.sol"; ในไฟล์นี้เมื่อ deploy ไป Testnet
 
 // Interface สำหรับ Ownership (จำเป็นสำหรับ onlyOwner)
 interface IOwnership {
@@ -14,7 +14,7 @@ interface IOwnership {
 
 // --- Events สำหรับ QuizParticipation ---
 event QuizJoined(uint256 indexed quizId, address indexed player);
-// *** EDITED: Added uint256 newScore to Event ***
+// *** แก้ไข: เพิ่ม uint256 newScore เข้าไปใน Event ***
 event AnswerSubmitted(uint256 indexed quizId, address indexed player, uint256 questionIndex, uint8 chosenAnswerIndex, uint256 newScore);
 event QuizCompleted(uint256 indexed quizId, address indexed player, uint256 finalScore);
 
@@ -59,8 +59,6 @@ contract QuizParticipationFacet {
         // เพิ่มผู้เล่นเข้าในรายการผู้เข้าร่วมของ Quiz นั้น
         qs.quizPlayers[_quizId].push(msg.sender);
 
-        // <<< ADDED: Console log for initial score after joining
-        console.log("Player joined quiz. Initial score:", playerParticipation.score);
         emit QuizJoined(_quizId, msg.sender);
     }
 
@@ -99,14 +97,10 @@ contract QuizParticipationFacet {
 
         // ตรวจสอบคำตอบและเพิ่มคะแนน
         if (_chosenAnswerIndex == question.correctAnswerIndex) {
-            // <<< ADDED: Console log for correct answer and reward
-            console.log("Correct answer! Adding reward:", qs.quizzes[_quizId].rewardAmount);
             playerParticipation.score += qs.quizzes[_quizId].rewardAmount;
         }
 
-        // <<< ADDED: Console log for current player score
-        console.log("Current player score:", playerParticipation.score);
-        // *** EDITED: Added playerParticipation.score to emit ***
+        // *** แก้ไข: เพิ่ม playerParticipation.score เข้าไปใน emit ***
         emit AnswerSubmitted(_quizId, msg.sender, _questionIndex, _chosenAnswerIndex, playerParticipation.score);
 
         // ตรวจสอบว่าผู้เล่นตอบคำถามครบทุกข้อแล้วหรือไม่
