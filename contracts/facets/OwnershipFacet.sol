@@ -2,18 +2,19 @@
 pragma solidity ^0.8.20;
 
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-//import {IAccessControlUpgradeable as IAccessControl} from "@openzeppelin/contracts-upgradeable/access/IAccessControlUpgradeable.sol";
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 
-import {LibDiamond} from "../libraries/LibDiamond.sol";
+import {LibDiamond} from "../libraries/LibDiamond.sol"; // ตรวจสอบ path นี้ให้แน่ใจว่าถูกต้อง
 
 contract OwnershipFacet is OwnableUpgradeable, AccessControlUpgradeable {
-    function init() external initializer {
-        __Ownable_init(msg.sender);
+    // ปรับปรุงฟังก์ชัน init ให้รับ address _owner
+    function init(address _owner) external initializer { // <<< เพิ่ม address _owner ตรงนี้!
+        __Ownable_init(_owner); // ส่ง _owner ไปยัง Ownable initializer
         __AccessControl_init();
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender); // เรียกใช้ DEFAULT_ADMIN_ROLE() โดยตรง ไม่ใช่ _DEFAULT_ADMIN_ROLE()
+        _grantRole(DEFAULT_ADMIN_ROLE, _owner); // ให้ admin role แก่ _owner
     }
 
+    // ฟังก์ชันอื่นๆ ที่เหลือเหมือนเดิม
     function hasRole(bytes32 role, address account) public view virtual override returns (bool) {
         return AccessControlUpgradeable.hasRole(role, account);
     }
@@ -33,14 +34,4 @@ contract OwnershipFacet is OwnableUpgradeable, AccessControlUpgradeable {
     function renounceRole(bytes32 role, address account) public virtual override {
         AccessControlUpgradeable.renounceRole(role, account);
     }
-
-    // ลบฟังก์ชัน _setupRole ออกไปทั้งหมด หากยังคงอยู่และทำให้เกิด TypeError
-    // เพราะมันเป็น internal ของ AccessControlUpgradeable และไม่ควร override ใน Facet นี้
-    // ถ้าคุณยังไม่ได้ลบในรอบก่อนหน้านี้ ให้ลบบรรทัดนี้ออกไป:
-    // function _setupRole(bytes32 role, address account) internal virtual override {
-    //    AccessControlUpgradeable._setupRole(role, account);
-    // }
-
-    // ลบฟังก์ชัน DEFAULT_ADMIN_ROLE() ที่เคยสร้างขึ้นมา เพราะมันซ้ำซ้อนกับ AccessControlUpgradeable
-    // คุณสามารถเข้าถึง DEFAULT_ADMIN_ROLE ได้โดยตรงจาก AccessControlUpgradeable
 }

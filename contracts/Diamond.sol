@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {LibDiamond} from "./libraries/LibDiamond.sol"; // ตรวจสอบ path นี้ให้แน่ใจว่าถูกต้อง
-import {IDiamondCut} from "./interfaces/IDiamondCut.sol"; // ตรวจสอบ path นี้ให้แน่ใจว่าถูกต้อง
+import {LibDiamond} from "./libraries/LibDiamond.sol";
+import {IDiamondCut} from "./interfaces/IDiamondCut.sol";
 import "hardhat/console.sol"; // สำหรับ development เท่านั้น
 
 // Diamond Contract เป็น Proxy ที่จะ delegatecall ไปยัง Facets ที่เหมาะสม
@@ -11,7 +11,8 @@ contract Diamond {
     // กำหนดเจ้าของเริ่มต้นและทำการ Initial Diamond Cut เพื่อเพิ่ม DiamondCutFacet
     constructor(address _contractOwner, address _diamondCutFacetAddress) payable {
         // ตรวจสอบว่า _contractOwner ไม่ใช่ address(0)
-        require(_contractOwner != address(0), "Diamond: Invalid owner address");
+        require(_contractOwner != address(0), "Diamond: Invalid owner address"); 
+        
         // ตรวจสอบว่า _diamondCutFacetAddress ไม่ใช่ address(0) และเป็น contract
         uint256 codeSize;
         assembly {
@@ -19,21 +20,22 @@ contract Diamond {
         }
         require(_diamondCutFacetAddress != address(0) && codeSize > 0, "Diamond: Invalid DiamondCutFacet address or not a contract");
 
-        // *** เปลี่ยนตรงนี้: ใช้ LibDiamond.setContractOwner เพื่อตั้งค่าเจ้าของ ***
-        LibDiamond.setContractOwner(_contractOwner); 
-        // *******************************************************************
-
         console.log("Diamond.sol: Constructor called.");
-        console.log("Diamond.sol: _owner:", string(abi.encodePacked(_contractOwner)));
-        console.log("Diamond.sol: _diamondCutFacet (address for DiamondCutFacet):", string(abi.encodePacked(_diamondCutFacetAddress)));
+
+        // แยก console.log สำหรับข้อความและค่าตัวแปร
+        console.log("Diamond.sol: _owner (param):");
+        console.logAddress(_contractOwner); // ใช้ console.logAddress สำหรับ address
+
+        console.log("Diamond.sol: _diamondCutFacet (address for DiamondCutFacet):");
+        console.logAddress(_diamondCutFacetAddress); // ใช้ console.logAddress สำหรับ address
 
         // ทำ Initial Diamond Cut เพื่อเพิ่ม DiamondCutFacet เข้าไป
-        // เพื่อให้ Diamond Contract สามารถรับคำสั่ง diamondCut ได้ตั้งแต่เริ่มต้น
         IDiamondCut.FacetCut[] memory diamondCut_ = new IDiamondCut.FacetCut[](1);
         bytes4[] memory functionSelectors_ = new bytes4[](1);
-        functionSelectors_[0] = IDiamondCut.diamondCut.selector; // Selector ของ diamondCut()
+        functionSelectors_[0] = IDiamondCut.diamondCut.selector;
 
-        console.log("Diamond.sol: IDiamondCut.diamondCut.selector:", string(abi.encodePacked(IDiamondCut.diamondCut.selector)));
+        console.log("Diamond.sol: IDiamondCut.diamondCut.selector:");
+        console.logBytes4(IDiamondCut.diamondCut.selector); // ใช้ console.logBytes4 สำหรับ bytes4
 
         diamondCut_[0] = IDiamondCut.FacetCut({
             facetAddress: _diamondCutFacetAddress,
