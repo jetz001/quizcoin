@@ -87,4 +87,31 @@ contract QuizGameBaseFacet {
     function hasRole(bytes32 role, address account) public view returns (bool) {
         return AccessControlUpgradeable(address(this)).hasRole(role, account);
     }
+
+    // ... (existing code) ...
+
+// --- Public Getters for AppStorage Constants ---
+function getPoolRewardWindowDuration() public view returns (uint256) {
+    return LibAppStorage.s().POOL_REWARD_WINDOW_DURATION_SECONDS;
+}
+function getLevel100QuestionValiditySeconds() public view returns (uint256) {
+    return LibAppStorage.s().LEVEL_100_QUESTION_VALIDITY_SECONDS;
+}
+function getBaseRewardForLevel99() public view returns (uint256) {
+    return LibAppStorage.s().BASE_REWARD_FOR_LEVEL_99;
+}
+function getRewardForLevel100() public view returns (uint256) {
+    return LibAppStorage.s().REWARD_FOR_LEVEL_100;
+}
+function getTreasuryFeePercentage() public view returns (uint256) {
+    return LibAppStorage.s().TREASURY_FEE_PERCENTAGE;
+}
+function getGameStartTimestamp() public view returns (uint256) {
+    return LibAppStorage.s().GAME_START_TIMESTAMP;
+}
+// ... (existing code) ...
+
+
+
+
 }
