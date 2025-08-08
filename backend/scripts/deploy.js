@@ -1,178 +1,273 @@
 // scripts/deploy.js
-
 const { ethers } = require("hardhat");
-// ไม่ต้อง import getSelectors และ FacetCutAction จากไฟล์ diamond.js แล้ว เพราะเราจะเขียนในไฟล์นี้โดยตรง
-// const { getSelectors, FacetCutAction } = require("./libraries/diamond.js");
+const fs = require('fs');
+const path = require('path');
 
-// กำหนด gas limit เพื่อหลีกเลี่ยง Out of Gas บน Testnet/Mainnet
-// ค่านี้สามารถปรับได้ตามความเหมาะสมของเครือข่ายที่คุณ deploy
-const gasLimit = 6000000;
+// Set a gas limit for all deployment transactions to prevent out-of-gas errors
+const deployGasLimit = 8000000;
+const FacetCutAction = { Add: 0, Replace: 1, Remove: 2 };
 
-async function deployDiamond() {
-  const [deployer] = await ethers.getSigners();
-
-  console.log(`Deploying contracts with the account: ${deployer.address}`);
-
-  // ใช้ gasLimit ที่ประกาศไว้ด้านบน
-  const deployGasLimit = 8000000; // แยกตัวแปรเพื่อความชัดเจน อาจจะใช้ค่าเดียวกับ gasLimit ด้านบนก็ได้
-
-  console.log("\n--- Deploying Facets ---");
-
-  // DiamondCutFacet
-  const DiamondCutFacetFactory = await ethers.getContractFactory("DiamondCutFacet");
-  const diamondCutFacet = await DiamondCutFacetFactory.deploy({ gasLimit: deployGasLimit });
-  await diamondCutFacet.waitForDeployment();
-  const diamondCutFacetAddress = await diamondCutFacet.getAddress();
-  console.log(`DiamondCutFacet deployed to: ${diamondCutFacetAddress}`);
-
-  // DiamondLoupeFacet
-  const DiamondLoupeFacetFactory = await ethers.getContractFactory("DiamondLoupeFacet");
-  const diamondLoupeFacet = await DiamondLoupeFacetFactory.deploy({ gasLimit: deployGasLimit });
-  await diamondLoupeFacet.waitForDeployment();
-  const diamondLoupeFacetAddress = await diamondLoupeFacet.getAddress();
-  console.log(`DiamondLoupeFacet deployed to: ${diamondLoupeFacetAddress}`);
-
-  // OwnershipFacet
-  const OwnershipFacetFactory = await ethers.getContractFactory("OwnershipFacet");
-  const ownershipFacet = await OwnershipFacetFactory.deploy({ gasLimit: deployGasLimit });
-  await ownershipFacet.waitForDeployment();
-  const ownershipFacetAddress = await ownershipFacet.getAddress();
-  console.log(`OwnershipFacet deployed to: ${ownershipFacetAddress}`);
-
-  // QuizCreationFacet
-  const QuizCreationFacetFactory = await ethers.getContractFactory("QuizCreationFacet");
-  const quizCreationFacet = await QuizCreationFacetFactory.deploy({ gasLimit: deployGasLimit });
-  await quizCreationFacet.waitForDeployment();
-  const quizCreationFacetAddress = await quizCreationFacet.getAddress();
-  console.log(`QuizCreationFacet deployed to: ${quizCreationFacetAddress}`);
-
-  // QuizParticipationFacet
-  const QuizParticipationFacetFactory = await ethers.getContractFactory("QuizParticipationFacet");
-  // บรรทัดที่ 51 (ในโค้ดเก่าของคุณ)
-const quizParticipationFacet = await QuizParticipationFacetFactory.deploy({ gasLimit: deployGasLimit });
-  await quizParticipationFacet.waitForDeployment();
-  const quizParticipationFacetAddress = await quizParticipationFacet.getAddress();
-  console.log(`QuizParticipationFacet deployed to: ${quizParticipationFacetAddress}`);
-
-  
-
- 
-
-  console.log("\n--- Deploying new Diamond Contract ---");
-  const Diamond = await ethers.getContractFactory("Diamond");
-
-  // ส่ง deployer.address (owner) และ diamondCutFacetAddress ไปยัง Diamond constructor
-  console.log("Deploying Diamond with owner:", deployer.address, "and DiamondCutFacetAddress:", diamondCutFacetAddress);
-  const diamond = await Diamond.deploy(deployer.address, diamondCutFacetAddress, { gasLimit: deployGasLimit });
-  await diamond.waitForDeployment();
-  const currentDiamondAddress = await diamond.getAddress();
-  console.log(`New Diamond Contract deployed to: ${currentDiamondAddress}`);
-
- 
-
-  console.log("\n--- Performing Initial Diamond Cut for remaining Facets ---");
-
-  // Define FacetCutAction enum ภายในไฟล์นี้เลย
-  const FacetCutAction = { Add: 0, Replace: 1, Remove: 2 };
-
-  // Helper function: getSelectors
-  function getSelectors(contractFactory) {
-    const selectors = [];
-    contractFactory.interface.forEachFunction(func => {
-      // ไม่ต้องใช้ func.selector.slice(0, 10) อีกต่อไป
-      // .selector จะให้ bytes4 อยู่แล้ว (e.g., '0xabcdef01')
-      selectors.push(func.selector);
-    });
-    return selectors;
-  }
-
-  const cuts = [];
-
-  // DiamondLoupeFacet
-  const loupeSelectors = getSelectors(DiamondLoupeFacetFactory);
-  console.log(`Deploy: DiamondLoupeFacet selectors (${loupeSelectors.length}):`, loupeSelectors);
-  cuts.push({
-    facetAddress: diamondLoupeFacetAddress,
-    action: FacetCutAction.Add,
-    functionSelectors: loupeSelectors,
+/**
+ * Helper function to get function selectors from a contract's interface.
+ * @param {ethers.Contract} contract The deployed contract instance.
+ * @returns {string[]} An array of function selectors (e.g., ["0x12345678"]).
+ */
+function getSelectors(contract) {
+  const selectors = [];
+  contract.interface.fragments.forEach(fragment => {
+    if (fragment.type === 'function' && fragment.selector) {
+      selectors.push(fragment.selector);
+    }
   });
-
-  // OwnershipFacet
-  const ownershipSelectors = getSelectors(OwnershipFacetFactory);
-  console.log(`Deploy: OwnershipFacet selectors (${ownershipSelectors.length}):`, ownershipSelectors);
-  cuts.push({
-    facetAddress: ownershipFacetAddress,
-    action: FacetCutAction.Add,
-    functionSelectors: ownershipSelectors,
-  });
-
-  // QuizCreationFacet
-  const quizCreationSelectors = getSelectors(QuizCreationFacetFactory);
-  console.log(`Deploy: QuizCreationFacet selectors (${quizCreationSelectors.length}):`, quizCreationSelectors);
-  cuts.push({
-    facetAddress: quizCreationFacetAddress,
-    action: FacetCutAction.Add,
-    functionSelectors: quizCreationSelectors,
-  });
-
-  // QuizParticipationFacet
-  const quizParticipationSelectors = getSelectors(QuizParticipationFacetFactory);
-  console.log(`Deploy: QuizParticipationFacet selectors (${quizParticipationSelectors.length}):`, quizParticipationSelectors);
-  cuts.push({
-    facetAddress: quizParticipationFacetAddress,
-    action: FacetCutAction.Add,
-    functionSelectors: quizParticipationSelectors,
-  });
-
-  console.log("Adding remaining facets to the Diamond...");
-  console.log("Deploy: Full diamondCut array:", JSON.stringify(cuts, null, 2));
-
-  const diamondCutContract = await ethers.getContractAt("IDiamondCut", currentDiamondAddress);
-
-  // *** แก้ไขตรงนี้: เรียกฟังก์ชัน `init` ของ OwnershipFacet ผ่าน diamondCut ***
-  // เพื่อให้ OwnershipFacet ตั้งค่า owner ของ Diamond Contract อย่างถูกต้อง
-  const initCalldata = OwnershipFacetFactory.interface.encodeFunctionData("init", [deployer.address]);
-
-  try {
-    const tx = await diamondCutContract.diamondCut(
-      cuts,
-      ownershipFacetAddress, // ที่อยู่ของ Facet ที่มีฟังก์ชัน init()
-      initCalldata,         // calldata สำหรับการเรียก init()
-      { gasLimit: deployGasLimit }
-    );
-    console.log("Deploy: diamondCut transaction sent. Hash:", tx.hash);
-    await tx.wait();
-    console.log("All remaining facets added successfully!");
-  } catch (error) {
-    console.error("Deploy: Error during diamondCut transaction:");
-    console.error(error);
-    throw error; // โยน error ออกไปเพื่อให้ process.exit(1) ทำงาน
-  }
-
- 
-
-  const ownerFacet = await ethers.getContractAt("OwnershipFacet", currentDiamondAddress);
-  const diamondOwner = await ownerFacet.owner();
-
-  console.log(`\nDiamond owner is: ${diamondOwner}`);
-  console.log(`Deployer address is: ${deployer.address}`);
-
-  // ตรวจสอบ Owner เพียงครั้งเดียว
-  if (diamondOwner.toLowerCase() !== deployer.address.toLowerCase()) {
-    throw new Error(`❌ Owner mismatch: expected ${deployer.address}, got ${diamondOwner}`);
-  } else {
-    console.log("✅ Diamond owner matches deployer address. Deployment successful!");
-  }
+  return selectors;
 }
 
-// เรียกใช้ฟังก์ชัน deployDiamond
+async function deployDiamond() {
+  // Get the deployer's account
+  const [deployer] = await ethers.getSigners();
+  console.log(`กำลัง deploy สัญญาด้วย account: ${deployer.address}`);
+
+  // --- 1. Deploy all facets individually ---
+  console.log("\n--- กำลัง deploy สัญญา Facet ทั้งหมด ---");
+  const FacetFactories = {
+    DiamondCutFacet: await ethers.getContractFactory("DiamondCutFacet"),
+    DiamondLoupeFacet: await ethers.getContractFactory("DiamondLoupeFacet"),
+    OwnershipFacet: await ethers.getContractFactory("OwnershipFacet"),
+    QuizGameBaseFacet: await ethers.getContractFactory("QuizGameBaseFacet"),
+    QuizGameModeFacet: await ethers.getContractFactory("QuizGameModeFacet"),
+    QuizGameRewardFacet: await ethers.getContractFactory("QuizGameRewardFacet"),
+    QuizParticipationFacet: await ethers.getContractFactory("QuizParticipationFacet"),
+    QuizCreationFacet: await ethers.getContractFactory("QuizCreationFacet")
+  };
+
+  const facetCuts = [];
+  const facetAddresses = {};
+  const seenSelectors = new Set();
+  const selectorMap = {}; // map selector => [facetNames]
+
+  for (const name in FacetFactories) {
+    const factory = FacetFactories[name];
+    const contract = await factory.deploy({ gasLimit: deployGasLimit });
+    await contract.deploymentTransaction().wait();
+    const address = contract.target;
+    console.log(`${name} deploy ไปที่: ${address}`);
+    facetAddresses[name] = address;
+
+    let selectors = getSelectors(contract);
+    
+    // Store all selectors for duplicate checking
+    selectors.forEach(s => {
+      selectorMap[s] = selectorMap[s] || [];
+      selectorMap[s].push(name);
+    });
+
+    // Filter out selectors we've already seen to prevent duplicates in diamondCut()
+    selectors = selectors.filter(s => !seenSelectors.has(s));
+
+    if (selectors.length === 0) {
+      console.log(`${name}: ไม่มี selector ใหม่ (ถูกข้าม)`);
+      continue;
+    }
+
+    selectors.forEach(s => seenSelectors.add(s));
+
+    facetCuts.push({
+      facetAddress: address,
+      action: FacetCutAction.Add,
+      functionSelectors: selectors
+    });
+  }
+
+  // Report any selectors that appeared in more than one facet
+  let hasDup = false;
+  for (const [sel, arr] of Object.entries(selectorMap)) {
+    if (arr.length > 1) {
+      hasDup = true;
+      console.warn(`Duplicate selector ${sel} พบใน facets: ${arr.join(", ")}`);
+    }
+  }
+  if (hasDup) {
+    console.warn("มี selectors ที่ซ้ำกัน — โปรดตรวจสอบว่าเป็นสิ่งที่ตั้งใจไว้ (เช่น supportsInterface) หรือย้ายฟังก์ชันไป facet เดียวเท่านั้น");
+  }
+
+  // --- 2. Deploy QuizCoin and PoolManager ---
+  console.log("\n--- กำลัง deploy QuizCoin และ PoolManager ---");
+  const QuizCoinFactory = await ethers.getContractFactory("QuizCoin");
+  const QuizCoinContract = await QuizCoinFactory.deploy({ gasLimit: deployGasLimit });
+  await QuizCoinContract.deploymentTransaction().wait();
+  const QuizCoinAddress = QuizCoinContract.target;
+  console.log("QuizCoin deploy ไปที่:", QuizCoinAddress);
+
+  const PoolManagerFactory = await ethers.getContractFactory("PoolManager");
+  const PoolManagerContract = await PoolManagerFactory.deploy(QuizCoinAddress, { gasLimit: deployGasLimit });
+  await PoolManagerContract.deploymentTransaction().wait();
+  const PoolManagerAddress = PoolManagerContract.target;
+  console.log("PoolManager deploy ไปที่:", PoolManagerAddress);
+
+  // --- 3. Deploy the main QuizGameDiamond Proxy contract ---
+  console.log("\n--- กำลัง deploy สัญญา QuizGameDiamond Proxy หลัก ---");
+  // The Diamond constructor sets the initial owner and the DiamondCutFacet
+  const DiamondFactory = await ethers.getContractFactory("Diamond");
+  const DiamondContract = await DiamondFactory.deploy(
+    deployer.address, // Set the deployer as the initial owner
+    facetAddresses.DiamondCutFacet, // Provide the address of the DiamondCutFacet
+    { gasLimit: deployGasLimit }
+  );
+  await DiamondContract.deploymentTransaction().wait();
+  const QuizGameDiamondAddress = DiamondContract.target;
+  console.log(`QuizGameDiamond Contract deploy ไปที่: ${QuizGameDiamondAddress}`);
+  console.log("✅ Diamond Proxy deploy สำเร็จแล้ว");
+  
+  // --- 4. Add the remaining facets in a single transaction ---
+  const diamondCutContract = await ethers.getContractAt("IDiamondCut", QuizGameDiamondAddress, deployer);
+
+  // Filter out the DiamondCutFacet as it was added during the constructor call
+  const remainingFacetCuts = facetCuts.filter(cut => cut.facetAddress !== facetAddresses.DiamondCutFacet);
+
+  console.log("\n--- กำลังเรียก diamondCut() เพื่อเพิ่ม Facet ที่เหลือทั้งหมด ---");
+  try {
+    const tx = await diamondCutContract.diamondCut(
+        remainingFacetCuts,
+        ethers.ZeroAddress, // Do not call an initializer function during this step
+        "0x", // No calldata for initialization
+        { gasLimit: deployGasLimit }
+    );
+    console.log(`diamondCut() tx ถูกส่งแล้ว: ${tx.hash}`);
+    await tx.wait();
+    console.log("✅ Facet ที่เหลือทั้งหมดถูกเพิ่มเข้าสู่ Diamond สำเร็จ!");
+  } catch (error) {
+    console.error("Deploy: เกิดข้อผิดพลาดขณะเรียก diamondCut():", error);
+    throw error;
+  }
+
+  // --- 5. Post-deployment initialization (in separate transactions) ---
+  console.log("\n--- กำลัง Initialize สัญญาและกำหนด Role เพิ่มเติม ---");
+  
+  // *** ขั้นตอนที่แก้ไข: เรียก initialize สองครั้งแยกกัน ***
+  
+  // ขั้นตอนที่ 5.1: เรียก init(owner) จาก OwnershipFacet เพื่อตั้งค่าเจ้าของ
+  const ownershipFacetAsDiamond = await ethers.getContractAt("OwnershipFacet", QuizGameDiamondAddress, deployer);
+  console.log("OwnershipFacet: กำลังเรียก init(deployer.address)...");
+  try {
+    const initOwnershipTx = await ownershipFacetAsDiamond.init(deployer.address, { gasLimit: deployGasLimit });
+    await initOwnershipTx.wait();
+    console.log("✅ init(deployer.address) ถูกเรียกและสำเร็จแล้ว!");
+  } catch (error) {
+    console.error("Deploy: เกิดข้อผิดพลาดขณะเรียก init() บน OwnershipFacet:", error);
+    throw error;
+  }
+
+  // ขั้นตอนที่ 5.2: เรียก initializeQuizGame() จาก QuizGameBaseFacet เพื่อตั้งค่าเกม
+  const quizGameBaseAsDiamond = await ethers.getContractAt("QuizGameBaseFacet", QuizGameDiamondAddress, deployer);
+  console.log("QuizGameBaseFacet: กำลังเรียก initializeQuizGame()...");
+  try {
+    const initGameTx = await quizGameBaseAsDiamond.initializeQuizGame({ gasLimit: deployGasLimit });
+    await initGameTx.wait();
+    console.log("✅ initializeQuizGame() ถูกเรียกและสำเร็จแล้ว!");
+  } catch (error) {
+    console.error("Deploy: เกิดข้อผิดพลาดขณะเรียก initializeQuizGame():", error);
+    throw error;
+  }
+  
+  // Set other required addresses
+  try {
+    await quizGameBaseAsDiamond.setPoolManagerAddress(PoolManagerAddress, { gasLimit: deployGasLimit });
+    console.log("ตั้งค่า PoolManager address ใน AppStorage แล้ว");
+    await quizGameBaseAsDiamond.setQuizCoinAddress(QuizCoinAddress, { gasLimit: deployGasLimit });
+    console.log("ตั้งค่า QuizCoin address ใน AppStorage แล้ว");
+  } catch (error) {
+    console.error("Deploy: เกิดข้อผิดพลาดขณะตั้งค่า PoolManager/QuizCoin addresses:", error);
+    throw error;
+  }
+
+  // Grant MINTER_ROLE to PoolManager
+  try {
+    const QuizCoinContractWithSigner = QuizCoinContract.connect(deployer);
+    const MINTER_ROLE = await QuizCoinContractWithSigner.MINTER_ROLE();
+    await QuizCoinContractWithSigner.grantRole(MINTER_ROLE, PoolManagerAddress, { gasLimit: deployGasLimit });
+    console.log("มอบ MINTER_ROLE ให้กับ PoolManager บน QuizCoin แล้ว");
+  } catch (error) {
+    console.error("Deploy: เกิดข้อผิดพลาดขณะมอบ MINTER_ROLE:", error);
+    throw error;
+  }
+
+  // Set QuizGameDiamond address in PoolManager
+  try {
+    const PoolManagerContractWithSigner = PoolManagerContract.connect(deployer);
+    await PoolManagerContractWithSigner.setQuizGameDiamondAddress(QuizGameDiamondAddress, { gasLimit: deployGasLimit });
+    console.log("ตั้งค่า QuizGameDiamond เป็นสัญญาเกมใน PoolManager แล้ว");
+  } catch (error) {
+    console.error("Deploy: เกิดข้อผิดพลาดขณะตั้งค่า QuizGameDiamond ใน PoolManager:", error);
+    throw error;
+  }
+
+  // Final owner verification
+  const ownerFacet = await ethers.getContractAt("OwnershipFacet", QuizGameDiamondAddress);
+  const diamondOwner = await ownerFacet.owner();
+
+  console.log(`\nเจ้าของ Diamond คือ: ${diamondOwner}`);
+  console.log(`ที่อยู่ของผู้ deploy คือ: ${deployer.address}`);
+
+  if (diamondOwner.toLowerCase() !== deployer.address.toLowerCase()) {
+    throw new Error(`❌ เจ้าของไม่ตรงกัน: คาดหวัง ${deployer.address}, แต่ได้ ${diamondOwner}`);
+  } else {
+    console.log("✅ เจ้าของ Diamond ตรงกับที่อยู่ของผู้ deploy แล้ว การ deploy สำเร็จ!");
+  }
+
+  // --- 6. Logic for copying ABIs to the frontend and saving contract addresses ---
+  const frontendAbiDir = path.join(__dirname, '..', '..', 'frontend', 'public', 'abi');
+  const backendArtifactsDir = path.join(__dirname, '..', 'artifacts', 'contracts');
+
+  if (!fs.existsSync(frontendAbiDir)) {
+    fs.mkdirSync(frontendAbiDir, { recursive: true });
+  }
+
+  const abisToCopy = [
+    { src: path.join(backendArtifactsDir, 'facets', 'DiamondCutFacet.sol', 'DiamondCutFacet.json'), dest: 'DiamondCutFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'DiamondLoupeFacet.sol', 'DiamondLoupeFacet.json'), dest: 'DiamondLoupeFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'OwnershipFacet.sol', 'OwnershipFacet.json'), dest: 'OwnershipFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'QuizGameBaseFacet.sol', 'QuizGameBaseFacet.json'), dest: 'QuizGameBaseFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'QuizGameModeFacet.sol', 'QuizGameModeFacet.json'), dest: 'QuizGameModeFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'QuizGameRewardFacet.sol', 'QuizGameRewardFacet.json'), dest: 'QuizGameRewardFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'QuizParticipationFacet.sol', 'QuizParticipationFacet.json'), dest: 'QuizParticipationFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'QuizCreationFacet.sol', 'QuizCreationFacet.json'), dest: 'QuizCreationFacet.json' },
+    { src: path.join(backendArtifactsDir, 'QuizCoin.sol', 'QuizCoin.json'), dest: 'QuizCoin.json' },
+    { src: path.join(backendArtifactsDir, 'QuizGameDiamond.sol', 'QuizGameDiamond.json'), dest: 'QuizGameDiamond.json' },
+  ];
+
+  for (const abiInfo of abisToCopy) {
+    const srcPath = abiInfo.src;
+    const destPath = path.join(frontendAbiDir, abiInfo.dest);
+    try {
+      if (fs.existsSync(srcPath)) {
+        fs.copyFileSync(srcPath, destPath);
+        console.log(`คัดลอก ABI: ${abiInfo.dest} ไปที่ ${frontendAbiDir}`);
+      } else {
+        console.error(`ไฟล์ ABI ไม่พบ: ${srcPath}`);
+      }
+    } catch (error) {
+      console.error(`เกิดข้อผิดพลาดในการคัดลอก ${abiInfo.dest}:`, error.message);
+    }
+  }
+
+  const addresses = {
+    QuizGameDiamond: QuizGameDiamondAddress,
+    QuizCoin: QuizCoinAddress,
+    PoolManager: PoolManagerAddress,
+    ...facetAddresses
+  };
+  const addressesPath = path.join(__dirname, '..', '..', 'frontend', 'src', 'config', 'addresses.json');
+  fs.writeFileSync(addressesPath, JSON.stringify(addresses, null, 2));
+  console.log(`ที่อยู่สัญญาถูกบันทึกไว้ที่ ${addressesPath}`);
+}
+
 deployDiamond()
   .then(() => {
-    console.log("\nDeployment process completed successfully.");
-    process.exit(0); // ออกจาก process ด้วยโค้ด 0 (สำเร็จ)
+    console.log("\nขั้นตอนการ Deploy สำเร็จสมบูรณ์");
+    process.exit(0);
   })
   .catch((error) => {
-    console.error("\nDeployment failed with error:");
+    console.error("\nการ Deploy ล้มเหลวพร้อมข้อผิดพลาด:");
     console.error(error);
-    process.exit(1); // ออกจาก process ด้วยโค้ด 1 (มี error)
+    process.exit(1);
   });
