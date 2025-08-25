@@ -1,0 +1,29 @@
+node_modules
+.env
+
+# Hardhat files
+/cache
+/artifacts
+
+# TypeChain files
+/typechain
+/typechain-types
+
+# solidity-coverage files
+/coverage
+/coverage.json
+
+# Hardhat Ignition default folder for deployments against a local node
+ignition/deployments/chain-31337
+
+# Optional additions for robustness (recommended)
+.DS_Store
+.vscode/
+*.log
+*.tmp
+*.bak
+
+# ในไฟล์ .gitignore
+backend/serviceAccountKey.json
+/backend/serviceAccountKey.json
+serviceAccountKey.json

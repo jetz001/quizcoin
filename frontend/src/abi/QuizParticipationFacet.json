@@ -1,0 +1,297 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "QuizParticipationFacet",
+  "sourceName": "contracts/facets/QuizParticipationFacet.sol",
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "solver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "submittedAnswerHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "isCorrect",
+          "type": "bool"
+        }
+      ],
+      "name": "AnswerSubmitted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "buyer",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "cost",
+          "type": "uint256"
+        }
+      ],
+      "name": "HintPurchased",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "player",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "quizId",
+          "type": "uint256"
+        }
+      ],
+      "name": "PlayerJoinedQuiz",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "activator",
+          "type": "address"
+        }
+      ],
+      "name": "QuestionActivatedFromBank",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuestionClosed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "creator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "difficultyLevel",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "baseRewardAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuestionCreated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "startTime",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuestionRewardWindowStarted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "player",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "quizId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionIndex",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "submittedAnswerIndex",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "isCorrect",
+          "type": "bool"
+        }
+      ],
+      "name": "QuizAnswerSubmitted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "creator",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "quizId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "rewardAmount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "totalQuestions",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuizCreated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "solver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "rewardAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "RewardDistributed",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_quizId",
+          "type": "uint256"
+        }
+      ],
+      "name": "joinQuiz",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_quizId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_questionIndex",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint8",
+          "name": "_submittedAnswerIndex",
+          "type": "uint8"
+        }
+      ],
+      "name": "submitQuizAnswer",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x60808060405234601557610642908161001b8239f35b600080fdfe6080604052600436101561001257600080fd5b60003560e01c806320725d59146103595763ca53f5d11461003257600080fd5b34610354576060366003190112610354576004356024359060443560ff811680910361035457816000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203360205260408060002060009060018060a01b033316825260205220826000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203260205260406000209060ff81541615610303576100e060ff6005840154166105c0565b60038201548510156102b2576002810191858354101561023d5760069086600052016020526040600020546000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203160205260026040600020019160ff835416156101f857859055846000526003810160205260406000208360ff1982541617905584600052600481016020526040600020600160ff1982541617905560ff82541683146101c4575b5060ff905416811460405191825260208201527f0a06276302b6bb1d092bf330b1622caaa3ff824d8120568193eb6868f20ecb8a60403392a4005b6001018054919060001983146101e257600160ff9301905590610189565b634e487b7160e01b600052601160045260246000fd5b60405162461bcd60e51b815260206004820152601960248201527f5175697a3a205175657374696f6e206e6f7420666f756e642e000000000000006044820152606490fd5b60405162461bcd60e51b815260206004820152604160248201527f5175697a3a20596f75206861766520616c726561647920616e7377657265642060448201527f6120686967686572206f7220657175616c20696e646578207175657374696f6e6064820152601760f91b608482015260a490fd5b60405162461bcd60e51b815260206004820152602360248201527f5175697a3a205175657374696f6e20696e646578206f7574206f6620626f756e60448201526232399760e91b6064820152608490fd5b60405162461bcd60e51b815260206004820152602360248201527f5175697a3a20596f75206d757374206a6f696e20746865207175697a2066697260448201526239ba1760e91b6064820152608490fd5b600080fd5b3461035457602036600319011261035457600435806000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203260205260406000206103aa60ff6005830154166105c0565b60008281527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520336020908152604080832033845290915290205460ff1661056a57816000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652034602052600460406000205491015411156105255760008181527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652033602090815260408083203384528252808320805460ff191660011790558383527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203490915290208054906801000000000000000082101561050f57600182018082558210156104f957600052602060002001336bffffffffffffffffffffffff60a01b825416179055337feb0ce0a0ebb6cd81f55c52eabb2b82d4426db73ee88d3aee11455a02246ae609600080a3005b634e487b7160e01b600052603260045260246000fd5b634e487b7160e01b600052604160045260246000fd5b60405162461bcd60e51b815260206004820152601760248201527f5175697a3a20546865207175697a2069732066756c6c2e0000000000000000006044820152606490fd5b60405162461bcd60e51b815260206004820152602860248201527f5175697a3a20596f75206861766520616c7265616479206a6f696e656420746860448201526734b99038bab4bd1760c11b6064820152608490fd5b156105c757565b60405162461bcd60e51b815260206004820152601960248201527f5175697a3a205175697a206973206e6f74206163746976652e000000000000006044820152606490fdfea264697066735822122090dd28f68ba52560078c0bf30e973aaf9e63d186fbfd30bf0ce0e1a4fb36a74e64736f6c634300081c0033",
+  "deployedBytecode": "0x6080604052600436101561001257600080fd5b60003560e01c806320725d59146103595763ca53f5d11461003257600080fd5b34610354576060366003190112610354576004356024359060443560ff811680910361035457816000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203360205260408060002060009060018060a01b033316825260205220826000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203260205260406000209060ff81541615610303576100e060ff6005840154166105c0565b60038201548510156102b2576002810191858354101561023d5760069086600052016020526040600020546000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203160205260026040600020019160ff835416156101f857859055846000526003810160205260406000208360ff1982541617905584600052600481016020526040600020600160ff1982541617905560ff82541683146101c4575b5060ff905416811460405191825260208201527f0a06276302b6bb1d092bf330b1622caaa3ff824d8120568193eb6868f20ecb8a60403392a4005b6001018054919060001983146101e257600160ff9301905590610189565b634e487b7160e01b600052601160045260246000fd5b60405162461bcd60e51b815260206004820152601960248201527f5175697a3a205175657374696f6e206e6f7420666f756e642e000000000000006044820152606490fd5b60405162461bcd60e51b815260206004820152604160248201527f5175697a3a20596f75206861766520616c726561647920616e7377657265642060448201527f6120686967686572206f7220657175616c20696e646578207175657374696f6e6064820152601760f91b608482015260a490fd5b60405162461bcd60e51b815260206004820152602360248201527f5175697a3a205175657374696f6e20696e646578206f7574206f6620626f756e60448201526232399760e91b6064820152608490fd5b60405162461bcd60e51b815260206004820152602360248201527f5175697a3a20596f75206d757374206a6f696e20746865207175697a2066697260448201526239ba1760e91b6064820152608490fd5b600080fd5b3461035457602036600319011261035457600435806000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203260205260406000206103aa60ff6005830154166105c0565b60008281527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520336020908152604080832033845290915290205460ff1661056a57816000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652034602052600460406000205491015411156105255760008181527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652033602090815260408083203384528252808320805460ff191660011790558383527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203490915290208054906801000000000000000082101561050f57600182018082558210156104f957600052602060002001336bffffffffffffffffffffffff60a01b825416179055337feb0ce0a0ebb6cd81f55c52eabb2b82d4426db73ee88d3aee11455a02246ae609600080a3005b634e487b7160e01b600052603260045260246000fd5b634e487b7160e01b600052604160045260246000fd5b60405162461bcd60e51b815260206004820152601760248201527f5175697a3a20546865207175697a2069732066756c6c2e0000000000000000006044820152606490fd5b60405162461bcd60e51b815260206004820152602860248201527f5175697a3a20596f75206861766520616c7265616479206a6f696e656420746860448201526734b99038bab4bd1760c11b6064820152608490fd5b156105c757565b60405162461bcd60e51b815260206004820152601960248201527f5175697a3a205175697a206973206e6f74206163746976652e000000000000006044820152606490fdfea264697066735822122090dd28f68ba52560078c0bf30e973aaf9e63d186fbfd30bf0ce0e1a4fb36a74e64736f6c634300081c0033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}
