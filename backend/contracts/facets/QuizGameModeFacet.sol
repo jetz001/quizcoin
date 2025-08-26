@@ -68,7 +68,7 @@ contract QuizGameModeFacet is IQuizGameEvents {
         newQuestion.blockCreationTime = block.timestamp;
         newQuestion.firstCorrectAnswerTime = 0;
         newQuestion.firstSolverAddress = address(0);
-        newQuestion.poolCorrectSolvers = new address ;
+        newQuestion.poolCorrectSolvers = new address [](0);
 
         emit QuestionCreated(questionId, msg.sender, _difficultyLevel, calculatedBaseReward);
     }
@@ -91,7 +91,7 @@ contract QuizGameModeFacet is IQuizGameEvents {
         }
 
         // ✅ Verify with Merkle proof
-        bool isCorrect = IMerkleFacet(address(this)).verifyAnswer(_answerLeaf, _merkleProof);
+        bool isCorrect = IMerkleFacet(address(this)).verifyQuiz(_answerLeaf, _merkleProof);
         require(isCorrect, "Quiz: Wrong answer or invalid proof");
 
         uint256 currentDayId = block.timestamp / (24 * 60 * 60);
@@ -145,7 +145,7 @@ contract QuizGameModeFacet is IQuizGameEvents {
         function buyHint(uint256 _questionId) public {
         LibAppStorage.AppStorage storage ds = LibAppStorage.s();
         
-        LibAppStorage.Question storage question = ds.questions[_questionId];
+        Question storage question = ds.questions[_questionId];
         require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
         require(!question.isClosed, "Quiz: Question is already closed.");
 
@@ -167,7 +167,7 @@ contract QuizGameModeFacet is IQuizGameEvents {
             "AccessControl: Caller is not a game admin or creator"
         );
 
-        LibAppStorage.Question storage question = ds.questions[_questionId];
+        Question storage question = ds.questions[_questionId];
         require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist in bank.");
         
         // Reset สถานะคำถามเพื่อเปิดใช้งานใหม่
