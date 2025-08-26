@@ -37,7 +37,8 @@ async function deployDiamond() {
     QuizGameModeFacet: await ethers.getContractFactory("QuizGameModeFacet"),
     QuizGameRewardFacet: await ethers.getContractFactory("QuizGameRewardFacet"),
     QuizParticipationFacet: await ethers.getContractFactory("QuizParticipationFacet"),
-    QuizCreationFacet: await ethers.getContractFactory("QuizCreationFacet")
+    QuizCreationFacet: await ethers.getContractFactory("QuizCreationFacet"),
+    MerkleFacet: await ethers.getContractFactory("MerkleFacet")
   };
 
   const facetCuts = [];
@@ -231,8 +232,11 @@ async function deployDiamond() {
     { src: path.join(backendArtifactsDir, 'facets', 'QuizGameRewardFacet.sol', 'QuizGameRewardFacet.json'), dest: 'QuizGameRewardFacet.json' },
     { src: path.join(backendArtifactsDir, 'facets', 'QuizParticipationFacet.sol', 'QuizParticipationFacet.json'), dest: 'QuizParticipationFacet.json' },
     { src: path.join(backendArtifactsDir, 'facets', 'QuizCreationFacet.sol', 'QuizCreationFacet.json'), dest: 'QuizCreationFacet.json' },
+    { src: path.join(backendArtifactsDir, 'facets', 'MerkleFacet.sol', 'MerkleFacet.json'), dest: 'MerkleFacet.json' },
+    { src: path.join(backendArtifactsDir, 'Diamond.sol', 'Diamond.json'), dest: 'Diamond.json' },
     { src: path.join(backendArtifactsDir, 'QuizCoin.sol', 'QuizCoin.json'), dest: 'QuizCoin.json' },
     { src: path.join(backendArtifactsDir, 'QuizGameDiamond.sol', 'QuizGameDiamond.json'), dest: 'QuizGameDiamond.json' },
+
   ];
 
   for (const abiInfo of abisToCopy) {
