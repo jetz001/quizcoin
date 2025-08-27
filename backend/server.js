@@ -336,9 +336,9 @@ app.post('/admin/generate-and-submit', async (req, res) => {
 
 // Startup: do NOT auto-run generation by default (it's expensive).
 // If you want to run automatically once at startup, uncomment the line below.
-// generateAndSubmitMerkle({ totalQuestions: 15000, genBatchSize: 50, submitChunkSize: 500 })
-//   .then(r => console.log("Auto-run completed", r))
-//   .catch(e => console.error("Auto-run failed", e));
+ generateAndSubmitMerkle({ totalQuestions: 100, genBatchSize: 5, submitChunkSize: 20 })
+   .then(r => console.log("Auto-run completed", r))
+   .catch(e => console.error("Auto-run failed", e));
 
 app.get('/', (req, res) => res.send('QuizCoin Backend Service (modified)'));
 app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
