@@ -279,9 +279,9 @@ deployDiamond()
   async function main() {
   const Contract = await ethers.getContractFactory("QuizCoin");
   const contract = await Contract.deploy();
-  await contract.deployed();
+  await contract.waitForDeployment();
 
-  console.log("Deployed at:", contract.address);
+  console.log("Deployed at:", contract.target);
 
   // ---- อัพเดท .env ----
   const envPath = path.join(__dirname, "..", ".env");
