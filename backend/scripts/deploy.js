@@ -275,3 +275,32 @@ deployDiamond()
     console.error(error);
     process.exit(1);
   });
+  
+async function main() {
+  const Contract = await ethers.getContractFactory("QuizCoin");
+  const contract = await Contract.deploy();
+  await contract.deployed();
+
+  console.log("Deployed at:", contract.address);
+
+  // ---- อัพเดท .env ----
+  const envPath = path.join(__dirname, "..", ".env");
+  let env = "";
+
+  if (fs.existsSync(envPath)) {
+    env = fs.readFileSync(envPath, "utf8");
+    // ลบ CONTRACT_ADDRESS เดิมออก
+    env = env.replace(/CONTRACT_ADDRESS=.*/g, "");
+  }
+
+  // เติม CONTRACT_ADDRESS ใหม่
+  env += `\nCONTRACT_ADDRESS=${contract.address}\n`;
+
+  fs.writeFileSync(envPath, env, "utf8");
+  console.log("✅ Updated .env with new CONTRACT_ADDRESS");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
