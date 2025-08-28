@@ -1,4 +1,4 @@
-// server.js (updated)
+// server.js (fixed version)
 // SPDX-License-Identifier: MIT
 import express from 'express';
 import admin from 'firebase-admin';
@@ -8,7 +8,7 @@ import { dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync } from 'fs';
 import cors from 'cors';
-import { ethers } from 'ethers';
+import { ethers, keccak256, toUtf8Bytes } from 'ethers';
 import { MerkleTree } from 'merkletreejs';
 
 dotenv.config();
@@ -21,7 +21,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: 'http://localhost:5173' }));
 app.use(express.json());
 
-// Firebase init (serviceAccountKey.json must exist)
+// Firebase init
 let serviceAccount;
 try {
   const serviceAccountPath = `${__dirname}/serviceAccountKey.json`;
@@ -40,16 +40,12 @@ if (!GEMINI_API_KEY) {
   console.error("Error: GEMINI_API_KEY missing in .env");
   process.exit(1);
 }
-const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
 // Blockchain config
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS; // Diamond address exposing MerkleFacet.submitMerkleRoot
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const PROVIDER_URL = process.env.PROVIDER_URL;
-
-if (!PRIVATE_KEY || !CONTRACT_ADDRESS || !PROVIDER_URL) {
-  console.warn("Blockchain config missing: CONTRACT_ADDRESS / PRIVATE_KEY / PROVIDER_URL");
-}
 
 const MERKLE_ABI = [
   "function submitMerkleRoot(uint256 quizId, bytes32 root, bytes32[] calldata leaves) external"
@@ -60,285 +56,125 @@ if (PRIVATE_KEY && CONTRACT_ADDRESS && PROVIDER_URL) {
   provider = new ethers.JsonRpcProvider(PROVIDER_URL);
   signer = new ethers.Wallet(PRIVATE_KEY, provider);
   merkleContract = new ethers.Contract(CONTRACT_ADDRESS, MERKLE_ABI, signer);
-  console.log("Connected to blockchain (Merkle contract ready).");
+  console.log("✅ Connected to blockchain (Merkle contract ready).");
 }
 
-// --- Helper: Gemini question generation --- //
-async function callGemini(promptText, maxRetries = 5) {
+// ---------------- Gemini Helper ----------------
+async function callGemini(promptText) {
   const payload = { contents: [{ parts: [{ text: promptText }] }] };
-  let attempt = 0;
-  while (attempt < maxRetries) {
-    attempt++;
-    try {
-      const res = await fetch(GEMINI_API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const txt = await res.text().catch(()=>"");
-        throw new Error(`HTTP ${res.status} ${res.statusText} - ${txt}`);
-      }
-      const json = await res.json();
-      const generatedText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!generatedText) throw new Error("Empty generation result");
-      return generatedText;
-    } catch (err) {
-      console.error(`Gemini attempt ${attempt} failed:`, err.message || err);
-      const backoff = Math.min(30000, 2 ** attempt * 1000);
-      await new Promise(r => setTimeout(r, backoff));
-    }
-  }
-  throw new Error("Gemini: exceeded retries");
+  const res = await fetch(GEMINI_API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
+  const json = await res.json();
+  const generatedText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+  return generatedText || null;
 }
 
 async function generateQuizQuestion() {
-  const prompts = [
+  const prompt = `
+    Generate a single quiz question suitable for a mobile game.
+    The question must have four options, one correct answer.
+    Output JSON format:
     {
-      topic: 'science',
-      text: `
-      Generate a single quiz question suitable for a mobile game.
-      The question should have four options, and only one correct answer.
-      The topic must be about science.
-      The output must be a JSON object with the following format:
-      {
-        "question": "The quiz question text",
-        "options": [
-          "Option A",
-          "Option B",
-          "Option C",
-          "Option D"
-        ],
-        "answer": "The correct answer text (e.g., 'Option C')"
-      }
-      `
-    },
-    {
-      topic: 'math',
-      text: `
-      Generate a single quiz question suitable for a mobile game.
-      The question should have four options, and only one correct answer.
-      The topic must be about mathematics.
-      The output must be a JSON object with the following format:
-      {
-        "question": "The quiz question text",
-        "options": [
-          "Option A",
-          "Option B",
-          "Option C",
-          "Option D"
-        ],
-        "answer": "The correct answer text (e.g., 'Option C')"
-      }
-      `
-    }
-  ];
-  const randomPrompt = prompts[Math.floor(Math.random()*prompts.length)];
+      "question": "...",
+      "options": ["A","B","C","D"],
+      "answer": "..."
+    }`;
   try {
-    const raw = await callGemini(randomPrompt.text);
+    const raw = await callGemini(prompt);
     const cleaned = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(cleaned);
-    parsed.category = randomPrompt.topic;
     return parsed;
-  } catch (err) {
-    console.error("generateQuizQuestion error:", err.message || err);
+  } catch (e) {
+    console.error("Gemini failed:", e.message);
     return null;
   }
 }
 
-// storeQuestion returns the quizId used
 async function storeQuestionToFirestore(quizId, quizData) {
-  try {
-    const answerIndex = quizData.options.indexOf(quizData.answer);
-    if (answerIndex === -1) {
-      console.warn("Correct answer not in options, skipping", quizId);
-      return false;
-    }
-    const difficulty = Math.floor(Math.random() * 99) + 1;
-    const doc = {
-      quizId,
-      question: quizData.question,
-      options: quizData.options,
-      answerIndex,
-      difficulty,
-      mode: 'solo',
-      category: quizData.category,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      isAnswered: false
-    };
-    await db.collection('questions').doc(quizId).set(doc);
-    return true;
-  } catch (err) {
-    console.error("storeQuestionToFirestore error:", err);
-    return false;
-  }
+  const answerIndex = quizData.options.indexOf(quizData.answer);
+  if (answerIndex === -1) return false;
+  const doc = {
+    quizId,
+    question: quizData.question,
+    options: quizData.options,
+    answerIndex,
+    difficulty: Math.floor(Math.random() * 100),
+    mode: 'solo',
+    category: 'general',
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    isAnswered: false,
+  };
+  await db.collection('questions').doc(quizId).set(doc);
+  return true;
 }
 
-// --- MAIN: generate many questions, build Merkle, submit root (chunked) --- //
-/**
- * totalQuestions: how many questions to create (default 15000)
- * genBatchSize: how many generateQuizQuestion() calls concurrently per batch (to limit concurrency)
- * submitChunkSize: how many leaves to send per submitMerkleRoot tx (reduce to fit gas)
- */
+// ---------------- Batch Generator ----------------
 async function generateAndSubmitMerkle({
-  totalQuestions = 15000,
-  genBatchSize = 50,
-  submitChunkSize = 500,
-  merkleQuizId = Math.floor(Date.now() / 1000) // numeric id for MerkleFacet
+  totalQuestions = 18,
+  genBatchSize = 9,
+  submitChunkSize = 9,
+  merkleQuizId = Math.floor(Date.now() / 1000)
 } = {}) {
-  console.log(`Start generating ${totalQuestions} questions (batchSize=${genBatchSize})`);
-  const leaves = []; // will store hex '0x...' leaves
+  console.log(`🚀 Start generating ${totalQuestions} questions (batchSize=${genBatchSize})`);
+
+  const leaves = [];
   let created = 0;
   let indexCounter = 0;
 
-  // create in loops: to avoid duplicate timestamps, we use a monotonic counter in id
   while (created < totalQuestions) {
     const active = Math.min(genBatchSize, totalQuestions - created);
-    const promises = [];
+    const batchResults = [];
+
     for (let i = 0; i < active; i++) {
-      promises.push(generateQuizQuestion());
-    }
-    const results = await Promise.all(promises);
-    for (const r of results) {
+      const quiz = await generateQuizQuestion();
+      if (!quiz) continue;
       indexCounter++;
-      if (!r) continue;
-      const quizId = `q_${Date.now()}_${indexCounter}`; // deterministic unique id
-      const ok = await storeQuestionToFirestore(quizId, r);
+      const quizId = `q_${Date.now()}_${indexCounter}`;
+      const ok = await storeQuestionToFirestore(quizId, quiz);
       if (!ok) continue;
-      // leaf = keccak256(abi.encodePacked(quizIdString)) -> use toUtf8Bytes(quizId)
-      const leaf = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(quizId));
-      leaves.push({ leaf, quizId }); // keep quizId for possible reference
+      const leaf = keccak256(toUtf8Bytes(quizId));
+      leaves.push({ leaf, quizId });
       created++;
-      if (created % 100 === 0) {
-        console.log(`Created ${created}/${totalQuestions} questions`);
-      }
-      if (created >= totalQuestions) break;
+      batchResults.push(quizId);
+      console.log(`Created ${created}/${totalQuestions}: ${quizId}`);
     }
+
+    console.log(`✅ Batch of ${batchResults.length} done. Waiting 1 minute...`);
+    if (created < totalQuestions) await new Promise(r => setTimeout(r, 60_000));
   }
 
-  console.log(`Generation done. Successfully created ${created} questions.`);
+  console.log(`🎉 All ${created} questions generated.`);
 
-  if (leaves.length === 0) {
-    throw new Error("No leaves created, aborting Merkle creation");
-  }
-
-  // Create Merkle Tree (merkletreejs expects Buffers)
   const leafBuffers = leaves.map(x => Buffer.from(x.leaf.slice(2), 'hex'));
-  const keccakHashFn = (data) => {
-    // merkletreejs passes Buffer; ethers.keccak256 accepts BytesLike
-    return Buffer.from(ethers.utils.keccak256(data).slice(2), 'hex');
-  };
-
+  const keccakHashFn = (data) => Buffer.from(keccak256(data).slice(2), 'hex');
   const tree = new MerkleTree(leafBuffers, keccakHashFn, { sortPairs: true });
-  const rootBuffer = tree.getRoot();
-  const rootHex = '0x' + rootBuffer.toString('hex');
+  const rootHex = '0x' + tree.getRoot().toString('hex');
+  console.log(`🌳 Merkle Root: ${rootHex}`);
 
-  console.log(`Merkle tree built. Root: ${rootHex}`);
-  console.log(`Total leaves: ${leafBuffers.length}`);
-  console.log(`Merkle Quiz ID (uint): ${merkleQuizId}`);
-  console.log("About to submit root and leaves to MerkleFacet on-chain in chunks.");
-  console.log(`Chunk size for submitMerkleRoot: ${submitChunkSize}`);
+  if (!merkleContract) return { root: rootHex, totalLeaves: leaves.length, merkleQuizId };
 
-  if (!merkleContract) {
-    console.warn("merkleContract not available. Skipping on-chain submission. Exiting.");
-    return { root: rootHex, totalLeaves: leafBuffers.length, merkleQuizId };
-  }
-
-  // Prepare array of leaf hex strings
   const leafHexes = leaves.map(x => x.leaf);
-
-  // Submit root + leaves in chunks (each tx will set mapping for that chunk)
   for (let i = 0; i < leafHexes.length; i += submitChunkSize) {
     const chunk = leafHexes.slice(i, i + submitChunkSize);
-    console.log(`Submitting chunk ${Math.floor(i/submitChunkSize)+1} (${chunk.length} leaves) to chain...`);
-    try {
-      const tx = await merkleContract.submitMerkleRoot(
-        merkleQuizId,
-        rootHex,
-        chunk,
-        { gasLimit: 6_000_000 } // try to set a gas limit (adjust if needed)
-      );
-      console.log(` tx sent: ${tx.hash} - waiting for confirmation...`);
-      const receipt = await tx.wait();
-      console.log(` tx confirmed in block ${receipt.blockNumber}`);
-      // small pause between txs to avoid spamming node
-      await new Promise(r => setTimeout(r, 1000));
-    } catch (err) {
-      console.error("Error submitting merkle chunk:", err);
-      throw err;
-    }
+    const tx = await merkleContract.submitMerkleRoot(merkleQuizId, rootHex, chunk, { gasLimit: 6_000_000 });
+    console.log(`⛓️ TX ${tx.hash} submitted, waiting...`);
+    await tx.wait();
+    console.log(`✅ TX confirmed`);
+    await new Promise(r => setTimeout(r, 1000));
   }
 
-  console.log("All chunks submitted. Merkle root and leaf->quizId mapping should be on-chain.");
-  return { root: rootHex, totalLeaves: leafHexes.length, merkleQuizId };
+  return { root: rootHex, totalLeaves: leaves.length, merkleQuizId };
 }
 
-// --- API endpoints (unchanged) --- //
-app.post('/api/get-answered-quizzes', async (req, res) => {
-  try {
-    const { userAccount } = req.body;
-    if (!userAccount) return res.status(400).json({ error: 'userAccount required' });
-    const querySnapshot = await db.collection('user_answers').where('userId', '==', userAccount).get();
-    const answered = [];
-    querySnapshot.forEach(doc => answered.push(doc.data().quizId));
-    res.json({ answeredQuizzes: answered });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'failed' });
-  }
-});
-
-app.post('/api/submit-answer', async (req, res) => {
-  try {
-    const { quizId, userAccount, selectedOption } = req.body;
-    if (!quizId || !userAccount || selectedOption === undefined) {
-      return res.status(400).json({ error: 'Missing quizId, userAccount, or selectedOption.' });
-    }
-    const doc = await db.collection('questions').doc(quizId).get();
-    if (!doc.exists) return res.status(404).json({ error: 'Quiz not found.' });
-    const quizData = doc.data();
-    const correctAnswer = quizData.options[quizData.answerIndex];
-    const isCorrect = (selectedOption === correctAnswer);
-
-    await db.collection('user_answers').add({
-      userId: userAccount,
-      quizId,
-      selectedOption,
-      isCorrect,
-      answeredAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-
-    // If correct, you might want to call on-chain distribution (not implemented here)
-    res.json({ isCorrect });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'failed' });
-  }
-});
-
-// --- One-off endpoint to trigger generation + submit (for manual run) ---
-// Use this endpoint to run the whole flow once from HTTP (or you can call generateAndSubmitMerkle() directly on startup)
-app.post('/admin/generate-and-submit', async (req, res) => {
-  try {
-    const { totalQuestions, genBatchSize, submitChunkSize, merkleQuizId } = req.body || {};
-    const result = await generateAndSubmitMerkle({
-      totalQuestions: totalQuestions || 15000,
-      genBatchSize: genBatchSize || 50,
-      submitChunkSize: submitChunkSize || 500,
-      merkleQuizId: merkleQuizId || Math.floor(Date.now()/1000)
-    });
-    res.json({ ok: true, result });
-  } catch (err) {
-    console.error("Admin generation error:", err);
-    res.status(500).json({ error: err.message || String(err) });
-  }
-});
-
-// Startup: do NOT auto-run generation by default (it's expensive).
-// If you want to run automatically once at startup, uncomment the line below.
- generateAndSubmitMerkle({ totalQuestions: 100, genBatchSize: 5, submitChunkSize: 20 })
-   .then(r => console.log("Auto-run completed", r))
-   .catch(e => console.error("Auto-run failed", e));
-
-app.get('/', (req, res) => res.send('QuizCoin Backend Service (modified)'));
+// ---------------- API ----------------
+app.get('/', (req, res) => res.send('QuizCoin Backend Service (fixed)'));
 app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+
+// Auto-run
+generateAndSubmitMerkle({ totalQuestions: 18, genBatchSize: 9, submitChunkSize: 9 })
+  .then(r => console.log("Auto-run completed", r))
+  .catch(e => console.error("Auto-run failed", e));
