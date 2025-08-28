@@ -275,8 +275,8 @@ deployDiamond()
     console.error(error);
     process.exit(1);
   });
-  
-async function main() {
+
+  async function main() {
   const Contract = await ethers.getContractFactory("QuizCoin");
   const contract = await Contract.deploy();
   await contract.deployed();
