@@ -128,10 +128,10 @@ async function deployDiamond() {
   console.log("\n--- กำลังเรียก diamondCut() เพื่อเพิ่ม Facet ที่เหลือทั้งหมด ---");
   try {
     const tx = await diamondCutContract.diamondCut(
-        remainingFacetCuts,
-        ethers.ZeroAddress, // Do not call an initializer function during this step
-        "0x", // No calldata for initialization
-        { gasLimit: deployGasLimit }
+      remainingFacetCuts,
+      ethers.ZeroAddress, // Do not call an initializer function during this step
+      "0x", // No calldata for initialization
+      { gasLimit: deployGasLimit }
     );
     console.log(`diamondCut() tx ถูกส่งแล้ว: ${tx.hash}`);
     await tx.wait();
@@ -263,6 +263,20 @@ async function deployDiamond() {
   const addressesPath = path.join(__dirname, '..', '..', 'frontend', 'src', 'config', 'addresses.json');
   fs.writeFileSync(addressesPath, JSON.stringify(addresses, null, 2));
   console.log(`ที่อยู่สัญญาถูกบันทึกไว้ที่ ${addressesPath}`);
+
+  // ---- อัพเดท .env ----
+  const envPath = path.join(__dirname, '..', '.env');
+  let env = '';
+
+  if (fs.existsSync(envPath)) {
+    env = fs.readFileSync(envPath, 'utf8');
+    env = env.replace(/CONTRACT_ADDRESS=.*/g, '');
+  }
+
+  env += `\nCONTRACT_ADDRESS=${QuizGameDiamondAddress}\n`;
+
+  fs.writeFileSync(envPath, env, 'utf8');
+  console.log("✅ Updated .env with new CONTRACT_ADDRESS");
 }
 
 deployDiamond()
@@ -275,32 +289,3 @@ deployDiamond()
     console.error(error);
     process.exit(1);
   });
-
-  async function main() {
-  const Contract = await ethers.getContractFactory("QuizCoin");
-  const contract = await Contract.deploy();
-  await contract.waitForDeployment();
-
-  console.log("Deployed at:", contract.target);
-
-  // ---- อัพเดท .env ----
-  const envPath = path.join(__dirname, "..", ".env");
-  let env = "";
-
-  if (fs.existsSync(envPath)) {
-    env = fs.readFileSync(envPath, "utf8");
-    // ลบ CONTRACT_ADDRESS เดิมออก
-    env = env.replace(/CONTRACT_ADDRESS=.*/g, "");
-  }
-
-  // เติม CONTRACT_ADDRESS ใหม่
-  env += `\nCONTRACT_ADDRESS=${contract.address}\n`;
-
-  fs.writeFileSync(envPath, env, "utf8");
-  console.log("✅ Updated .env with new CONTRACT_ADDRESS");
-}
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
