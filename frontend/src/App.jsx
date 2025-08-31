@@ -14,6 +14,7 @@ function App() {
   const [userAccount, setUserAccount] = useState(null);
   const [quizzes, setQuizzes] = useState([]);
   const [currentPage, setCurrentPage] = useState('home');
+  const [selectedMode, setSelectedMode] = useState(null); // 'solo' or 'pool'
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   // Firebase Auth
@@ -41,41 +42,91 @@ function App() {
 
   // Fetch quizzes from Firestore
   useEffect(() => {
-      if (!isAuthReady) return;
-      const q = collection(db, "questions");
-      const unsubscribe = onSnapshot(q, (querySnapshot) => {
-          const quizData = querySnapshot.docs.map(doc => ({
-              ...doc.data(),
-              quizId: doc.id
-          }));
-          setQuizzes(quizData);
-      }, (error) => {
-          console.error("Error fetching quizzes:", error);
-      });
-      return () => unsubscribe();
+    if (!isAuthReady) return;
+    
+    const q = collection(db, "questions");
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const quizData = querySnapshot.docs.map(doc => ({
+        ...doc.data(),
+        quizId: doc.id
+      }));
+      console.log("📊 Loaded quizzes:", quizData.length);
+      setQuizzes(quizData);
+    }, (error) => {
+      console.error("Error fetching quizzes:", error);
+    });
+    
+    return () => unsubscribe();
   }, [isAuthReady]);
 
   const connectWallet = async () => {
     if (window.ethereum) {
       try {
-        const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+        const accounts = await window.ethereum.request({ 
+          method: "eth_requestAccounts" 
+        });
         setUserAccount(accounts[0]);
-        setCurrentPage("game");
+        console.log("✅ Wallet connected:", accounts[0]);
+        
+        // Check network
+        const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+        console.log("Current chain ID:", chainId);
+        
+        // BNB Testnet chain ID is 0x61 (97 in decimal)
+        if (chainId !== '0x61') {
+          try {
+            await window.ethereum.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: '0x61' }],
+            });
+          } catch (switchError) {
+            // Chain not added to wallet
+            if (switchError.code === 4902) {
+              try {
+                await window.ethereum.request({
+                  method: 'wallet_addEthereumChain',
+                  params: [{
+                    chainId: '0x61',
+                    chainName: 'BNB Smart Chain Testnet',
+                    nativeCurrency: {
+                      name: 'BNB',
+                      symbol: 'BNB',
+                      decimals: 18,
+                    },
+                    rpcUrls: ['https://data-seed-prebsc-1-s1.binance.org:8545/'],
+                    blockExplorerUrls: ['https://testnet.bscscan.com/'],
+                  }],
+                });
+              } catch (addError) {
+                console.error("Failed to add BNB Testnet:", addError);
+              }
+            }
+          }
+        }
+        
       } catch (error) {
         console.error("User denied account access or other error:", error);
       }
     } else {
-      console.error("Please install MetaMask to use this DApp!");
+      alert("กรุณาติดตั้ง MetaMask เพื่อใช้งาน DApp นี้!");
     }
   };
 
   const disconnectWallet = () => {
     setUserAccount(null);
+    setSelectedMode(null);
     setCurrentPage("home");
+    console.log("👋 Wallet disconnected");
+  };
+
+  const handleModeSelect = (mode) => {
+    setSelectedMode(mode);
+    setCurrentPage("game");
+    console.log(`🎮 Game mode selected: ${mode}`);
   };
 
   const onGoBack = () => {
-    setUserAccount(null);
+    setSelectedMode(null);
     setCurrentPage("home");
   };
 
@@ -86,6 +137,7 @@ function App() {
           connectWallet={connectWallet}
           userAccount={userAccount}
           disconnectWallet={disconnectWallet}
+          onModeSelect={handleModeSelect}
         />
       ) : (
         <GamePage
@@ -93,6 +145,7 @@ function App() {
           onGoBack={onGoBack}
           db={db}
           userAccount={userAccount}
+          selectedMode={selectedMode}
         />
       )}
     </div>

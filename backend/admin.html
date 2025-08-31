@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuizCoin Admin Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .wallet-section {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+        
+        .wallet-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        
+        .wallet-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff4444;
+        }
+        
+        .status-dot.connected {
+            background: #44ff44;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #ff7b7b 0%, #e94e4e 100%);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #7bff7b 0%, #4ee94e 100%);
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .card h3 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 1.3rem;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .logs {
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 5px;
+            word-break: break-all;
+        }
+        
+        .log-entry.error {
+            color: #ff4444;
+        }
+        
+        .log-entry.warning {
+            color: #ffaa00;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .batch-grid {
+            display: grid;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .batch-item {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .batch-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .batch-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .batch-status.open { background: #ff7b7b; color: white; }
+        .batch-status.ready { background: #ffaa00; color: white; }
+        .batch-status.committed_onchain { background: #44ff44; color: white; }
+        .batch-status.committed_offchain { background: #7bff7b; color: white; }
+        
+        .hidden {
+            display: none;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .wallet-info {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 QuizCoin Admin Dashboard</h1>
+            <p>Manage your quiz game contracts and generate questions</p>
+        </div>
+        
+        <!-- Wallet Connection -->
+        <div class="wallet-section">
+            <div class="wallet-info">
+                <div class="wallet-status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="walletStatus">Not Connected</span>
+                    <span id="networkInfo" class="hidden"></span>
+                </div>
+                <button class="btn" id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+            </div>
+        </div>
+        
+        <!-- Main Grid -->
+        <div class="grid">
+            <!-- Quiz Generation -->
+            <div class="card">
+                <h3>🤖 Generate Quiz Questions</h3>
+                <div class="form-group">
+                    <label>Total Questions</label>
+                    <input type="number" id="totalQuestions" value="18" min="1" max="100">
+                </div>
+                <div class="form-group">
+                    <label>Sub-batch Size</label>
+                    <input type="number" id="subBatchSize" value="9" min="1" max="20">
+                </div>
+                <button class="btn" onclick="generateBatch()" id="generateBtn">
+                    Generate Questions
+                </button>
+                <button class="btn btn-secondary" onclick="generateAndCommit()" id="generateCommitBtn">
+                    Generate & Commit On-Chain
+                </button>
+            </div>
+            
+            <!-- Contract Interaction -->
+            <div class="card">
+                <h3>⚙️ Contract Settings</h3>
+                <div class="form-group">
+                    <label>Contract Address</label>
+                    <input type="text" id="contractAddress" placeholder="0x..." value="0x5FbDB2315678afecb367f032d93F642f64180aa3">
+                </div>
+                <div class="form-group">
+                    <label>Backend URL</label>
+                    <input type="text" id="backendUrl" value="http://localhost:3000" placeholder="Backend URL">
+                </div>
+                <button class="btn" onclick="initializeQuizGame()">Initialize Quiz Game</button>
+                <button class="btn btn-success" onclick="getGameInfo()">Get Game Info</button>
+            </div>
+            
+            <!-- Create Question -->
+            <div class="card">
+                <h3>➕ Create Question</h3>
+                <div class="form-group">
+                    <label>Answer Leaf (bytes32)</label>
+                    <input type="text" id="answerLeaf" placeholder="0x...">
+                </div>
+                <div class="form-group">
+                    <label>Hint Hash (bytes32)</label>
+                    <input type="text" id="hintHash" placeholder="0x...">
+                </div>
+                <div class="form-group">
+                    <label>Difficulty Level (1-100)</label>
+                    <input type="number" id="difficulty" min="1" max="100" value="50">
+                </div>
+                <div class="form-group">
+                    <label>Mode</label>
+                    <select id="questionMode">
+                        <option value="0">Solo</option>
+                        <option value="1">Pool</option>
+                    </select>
+                </div>
+                <button class="btn" onclick="createQuestion()">Create Question</button>
+            </div>
+            
+            <!-- Batch Management -->
+            <div class="card">
+                <h3>📦 Batch Management</h3>
+                <div class="form-group">
+                    <label>Batch ID</label>
+                    <input type="text" id="batchId" placeholder="Enter batch ID">
+                </div>
+                <button class="btn" onclick="commitBatch()">Commit Batch</button>
+                <button class="btn btn-success" onclick="loadBatches()">Load Batches</button>
+                
+                <div id="batchList" class="batch-grid"></div>
+            </div>
+        </div>
+        
+        <!-- Logs -->
+        <div class="logs">
+            <div class="log-entry">🔧 Admin Dashboard Initialized</div>
+            <div class="log-entry">📡 Ready to connect to MetaMask...</div>
+            <div id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let provider = null;
+        let signer = null;
+        let contract = null;
+        let userAccount = null;
+        
+        // Contract ABI - Add more functions as needed
+        const CONTRACT_ABI = [
+            "function initializeQuizGame() external",
+            "function createQuestion(bytes32 _answerLeaf, bytes32 _hintHash, uint256 _difficultyLevel, uint8 _mode) external",
+            "function getGameStartTimestamp() external view returns (uint256)",
+            "function getNextQuestionId() external view returns (uint256)",
+            "function hasRole(bytes32 role, address account) external view returns (bool)",
+            "function DEFAULT_ADMIN_ROLE() external view returns (bytes32)",
+            "function submitMerkleRoot(uint256 quizId, bytes32 root, bytes32[] calldata leaves) external"
+        ];
+        
+        // Utility functions
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.innerHTML = `${new Date().toLocaleTimeString()} - ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function setLoading(elementId, isLoading) {
+            const element = document.getElementById(elementId);
+            if (isLoading) {
+                element.innerHTML = '<span class="loading"></span> Loading...';
+                element.disabled = true;
+            } else {
+                element.disabled = false;
+            }
+        }
+        
+        function updateWalletStatus(connected, account = null, network = null) {
+            const statusDot = document.getElementById('statusDot');
+            const walletStatus = document.getElementById('walletStatus');
+            const networkInfo = document.getElementById('networkInfo');
+            const connectBtn = document.getElementById('connectBtn');
+            
+            if (connected) {
+                statusDot.classList.add('connected');
+                walletStatus.textContent = `Connected: ${account?.slice(0,6)}...${account?.slice(-4)}`;
+                if (network) {
+                    networkInfo.textContent = `Network: ${network.name} (${network.chainId})`;
+                    networkInfo.classList.remove('hidden');
+                }
+                connectBtn.textContent = 'Disconnect';
+            } else {
+                statusDot.classList.remove('connected');
+                walletStatus.textContent = 'Not Connected';
+                networkInfo.classList.add('hidden');
+                connectBtn.textContent = 'Connect MetaMask';
+            }
+        }
+        
+        // Wallet connection
+        async function connectWallet() {
+            if (!window.ethereum) {
+                log('MetaMask not detected! Please install MetaMask.', 'error');
+                return;
+            }
+            
+            try {
+                if (userAccount) {
+                    // Disconnect
+                    provider = null;
+                    signer = null;
+                    contract = null;
+                    userAccount = null;
+                    updateWalletStatus(false);
+                    log('Wallet disconnected', 'warning');
+                    return;
+                }
+                
+                log('Connecting to MetaMask...');
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+                
+                provider = new ethers.BrowserProvider(window.ethereum);
+                signer = await provider.getSigner();
+                userAccount = accounts[0];
+                
+                const network = await provider.getNetwork();
+                updateWalletStatus(true, userAccount, network);
+                
+                // Initialize contract
+                const contractAddress = document.getElementById('contractAddress').value;
+                if (contractAddress && ethers.isAddress(contractAddress)) {
+                    contract = new ethers.Contract(contractAddress, CONTRACT_ABI, signer);
+                    log(`Contract initialized at ${contractAddress}`);
+                }
+                
+                log(`Connected to ${userAccount} on ${network.name}`, 'success');
+                
+            } catch (error) {
+                log(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+        
+        // Backend API calls
+        async function callBackend(endpoint, method = 'GET', data = null) {
+            const backendUrl = document.getElementById('backendUrl').value;
+            const url = `${backendUrl}${endpoint}`;
+            
+            const options = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            };
+            
+            if (data) {
+                options.body = JSON.stringify(data);
+            }
+            
+            const response = await fetch(url, options);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            return response.json();
+        }
+        
+        // Quiz generation functions
+        async function generateBatch() {
+            const totalQuestions = parseInt(document.getElementById('totalQuestions').value);
+            const subBatchSize = parseInt(document.getElementById('subBatchSize').value);
+            
+            if (totalQuestions < 1 || subBatchSize < 1) {
+                log('Please enter valid numbers for questions and batch size', 'error');
+                return;
+            }
+            
+            setLoading('generateBtn', true);
+            log(`Starting batch generation: ${totalQuestions} questions...`);
+            
+            try {
+                const result = await callBackend('/admin/generate-batch', 'POST', {
+                    totalQuestions,
+                    subBatchSize
+                });
+                
+                if (result.success) {
+                    log(`✅ Batch ${result.batchId} generated successfully! Created ${result.totalCreated} questions`, 'success');
+                } else {
+                    log(`❌ Generation failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Generation error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('generateBtn').innerHTML = 'Generate Questions';
+                document.getElementById('generateBtn').disabled = false;
+            }
+        }
+        
+        async function generateAndCommit() {
+            const totalQuestions = parseInt(document.getElementById('totalQuestions').value);
+            const subBatchSize = parseInt(document.getElementById('subBatchSize').value);
+            
+            setLoading('generateCommitBtn', true);
+            log(`Starting batch generation and commit: ${totalQuestions} questions...`);
+            
+            try {
+                const result = await callBackend('/admin/generate-and-commit', 'POST', {
+                    totalQuestions,
+                    subBatchSize
+                });
+                
+                if (result.success) {
+                    log(`✅ Batch generated and committed! Root: ${result.root}`, 'success');
+                    log(`📦 Total leaves: ${result.totalLeaves}, On-chain: ${result.onChain}`, 'success');
+                    if (result.txs && result.txs.length > 0) {
+                        result.txs.forEach(tx => log(`🔗 Transaction: ${tx}`, 'success'));
+                    }
+                } else {
+                    log(`❌ Operation failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Operation error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('generateCommitBtn').innerHTML = 'Generate & Commit On-Chain';
+                document.getElementById('generateCommitBtn').disabled = false;
+            }
+        }
+        
+        async function commitBatch() {
+            const batchId = document.getElementById('batchId').value.trim();
+            
+            if (!batchId) {
+                log('Please enter a batch ID', 'error');
+                return;
+            }
+            
+            log(`Committing batch ${batchId}...`);
+            
+            try {
+                const result = await callBackend('/admin/commit-batch', 'POST', { batchId });
+                
+                if (result.success) {
+                    log(`✅ Batch ${batchId} committed! Root: ${result.root}`, 'success');
+                    if (result.txs) {
+                        result.txs.forEach(tx => log(`🔗 Transaction: ${tx}`, 'success'));
+                    }
+                } else {
+                    log(`❌ Commit failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Commit error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function loadBatches() {
+            log('Loading batches...');
+            
+            try {
+                const result = await callBackend('/admin/batches');
+                displayBatches(result.batches);
+                log(`✅ Loaded ${result.batches.length} batches`, 'success');
+            } catch (error) {
+                log(`❌ Failed to load batches: ${error.message}`, 'error');
+            }
+        }
+        
+        function displayBatches(batches) {
+            const batchList = document.getElementById('batchList');
+            batchList.innerHTML = '';
+            
+            batches.forEach(batch => {
+                const batchDiv = document.createElement('div');
+                batchDiv.className = 'batch-item';
+                
+                const createdAt = batch.createdAt ? new Date(batch.createdAt.seconds * 1000).toLocaleString() : 'N/A';
+                
+                batchDiv.innerHTML = `
+                    <div class="batch-header">
+                        <strong>Batch ${batch.batchId}</strong>
+                        <span class="batch-status ${batch.status}">${batch.status}</span>
+                    </div>
+                    <div>Questions: ${batch.totalQuestions || 'N/A'}</div>
+                    <div>Created: ${createdAt}</div>
+                    ${batch.root ? `<div>Root: ${batch.root.slice(0, 10)}...</div>` : ''}
+                `;
+                
+                batchList.appendChild(batchDiv);
+            });
+        }
+        
+        // Contract functions
+        async function initializeQuizGame() {
+            if (!contract) {
+                log('Please connect wallet and set contract address first', 'error');
+                return;
+            }
+            
+            log('Initializing Quiz Game...');
+            
+            try {
+                const tx = await contract.initializeQuizGame();
+                log(`Transaction sent: ${tx.hash}`);
+                
+                const receipt = await tx.wait();
+                log(`✅ Quiz Game initialized! Block: ${receipt.blockNumber}`, 'success');
+            } catch (error) {
+                log(`❌ Initialization failed: ${error.message}`, 'error');
+            }
+        }
+        
+        async function createQuestion() {
+            if (!contract) {
+                log('Please connect wallet and set contract address first', 'error');
+                return;
+            }
+            
+            const answerLeaf = document.getElementById('answerLeaf').value.trim();
+            const hintHash = document.getElementById('hintHash').value.trim();
+            const difficulty = parseInt(document.getElementById('difficulty').value);
+            const mode = parseInt(document.getElementById('questionMode').value);
+            
+            if (!answerLeaf || !hintHash) {
+                log('Please fill in answer leaf and hint hash', 'error');
+                return;
+            }
+            
+            log('Creating question...');
+            
+            try {
+                const tx = await contract.createQuestion(answerLeaf, hintHash, difficulty, mode);
+                log(`Transaction sent: ${tx.hash}`);
+                
+                const receipt = await tx.wait();
+                log(`✅ Question created! Block: ${receipt.blockNumber}`, 'success');
+            } catch (error) {
+                log(`❌ Question creation failed: ${error.message}`, 'error');
+            }
+        }
+        
+        async function getGameInfo() {
+            if (!contract) {
+                log('Please connect wallet and set contract address first', 'error');
+                return;
+            }
+            
+            try {
+                const startTimestamp = await contract.getGameStartTimestamp();
+                const nextQuestionId = await contract.getNextQuestionId();
+                
+                log(`🎮 Game Start: ${new Date(Number(startTimestamp) * 1000).toLocaleString()}`, 'success');
+                log(`🔢 Next Question ID: ${nextQuestionId}`, 'success');
+            } catch (error) {
+                log(`❌ Failed to get game info: ${error.message}`, 'error');
+            }
+        }
+        
+        // Auto-connect on page load
+        window.addEventListener('load', async () => {
+            if (window.ethereum) {
+                try {
+                    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                    if (accounts.length > 0) {
+                        connectWallet();
+                    }
+                } catch (error) {
+                    console.error('Failed to get accounts:', error);
+                }
+            }
+        });
+        
+        // Listen for account changes
+        if (window.ethereum) {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                if (accounts.length === 0) {
+                    updateWalletStatus(false);
+                    userAccount = null;
+                    log('Account disconnected', 'warning');
+                } else {
+                    userAccount = accounts[0];
+                    updateWalletStatus(true, userAccount);
+                    log(`Account changed to ${userAccount}`, 'warning');
+                }
+            });
+            
+            window.ethereum.on('chainChanged', () => {
+                window.location.reload();
+            });
+        }
+    </script>
+</body>
+</html>
