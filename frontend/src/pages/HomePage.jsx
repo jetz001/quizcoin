@@ -12,6 +12,22 @@ const HomePage = ({ connectWallet, userAccount, disconnectWallet, onModeSelect }
     onModeSelect(mode);
   };
 
+  // Copy to clipboard function
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      alert('คัดลอกที่อยู่เหรียญ QZC สำเร็จ!');
+    }).catch(() => {
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      alert('คัดลอกที่อยู่เหรียญ QZC สำเร็จ!');
+    });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-black text-white relative overflow-hidden">
       {/* Animated Background Elements */}
@@ -51,6 +67,28 @@ const HomePage = ({ connectWallet, userAccount, disconnectWallet, onModeSelect }
             <p className="text-xl md:text-2xl text-gray-300 mt-4 font-light">
               🎯 ท้าทายความรู้ของคุณและรับรางวัล QZC ในโลก Web3
             </p>
+          </div>
+
+          {/* QZC Token Address Section */}
+          <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 backdrop-blur-sm rounded-2xl p-6 border border-yellow-500/30 mb-8 max-w-2xl mx-auto">
+            <h3 className="text-lg font-bold mb-3 text-yellow-400">🪙 QuizCoin (QZC) Token Address</h3>
+            <div className="bg-black/30 rounded-xl p-4 mb-3">
+              <p className="text-green-400 font-mono text-sm break-all">
+                0x573A71E80b19EC21d5C925140514Ac41659B323a
+              </p>
+            </div>
+            <div className="flex justify-center space-x-4">
+              <button
+                onClick={() => copyToClipboard('0x573A71E80b19EC21d5C925140514Ac41659B323a')}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm transition-colors flex items-center space-x-2"
+              >
+                <span>📋</span>
+                <span>คัดลอก</span>
+              </button>
+              <span className="bg-orange-600/20 text-orange-300 px-4 py-2 rounded-lg text-sm">
+                🌐 BSC Testnet
+              </span>
+            </div>
           </div>
 
           {/* Feature Cards */}
