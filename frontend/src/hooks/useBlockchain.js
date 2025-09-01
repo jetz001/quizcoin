@@ -1,289 +1,340 @@
-// src/hooks/useBlockchain.js
-import { useState, useEffect } from 'react';
-import { ethers } from 'ethers';
-import contractAddresses from '../config/addresses.json';
+// frontend/src/hooks/useBlockchain.js - เพิ่ม validation และ debug
 
-// Import actual ABIs from generated files
-import QuizGameModeFacetABI from '../abi/QuizGameModeFacet.json';
-import QuizGameBaseFacetABI from '../abi/QuizGameBaseFacet.json';
-import QuizGameRewardFacetABI from '../abi/QuizGameRewardFacet.json';
+import { useState, useCallback, useEffect } from 'react';
+import { blockchainService, handleBlockchainError } from '../utils/blockchain';
 
-// Combined ABI for the QuizGameDiamond contract
-const combinedQuizDiamondABI = [
-  // From QuizGameModeFacet - Create Question
-  {
-    "inputs": [
-      { "internalType": "bytes32", "name": "_answerLeaf", "type": "bytes32" },
-      { "internalType": "bytes32", "name": "_hintHash", "type": "bytes32" },
-      { "internalType": "uint256", "name": "_difficultyLevel", "type": "uint256" },
-      { "internalType": "uint8", "name": "_mode", "type": "uint8" }
-    ],
-    "name": "createQuestion",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  // From QuizGameModeFacet - Submit Answer
-  {
-    "inputs": [
-      { "internalType": "uint256", "name": "_questionId", "type": "uint256" },
-      { "internalType": "bytes32", "name": "_answerLeaf", "type": "bytes32" },
-      { "internalType": "bytes32[]", "name": "_merkleProof", "type": "bytes32[]" }
-    ],
-    "name": "submitAnswer",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  // From QuizGameBaseFacet - Get Question
-  {
-    "inputs": [{ "internalType": "uint256", "name": "_questionId", "type": "uint256" }],
-    "name": "getQuestion",
-    "outputs": [
-      { "internalType": "bytes32", "name": "correctAnswerHash", "type": "bytes32" },
-      { "internalType": "bytes32", "name": "hintHash", "type": "bytes32" },
-      { "internalType": "address", "name": "questionCreator", "type": "address" },
-      { "internalType": "uint256", "name": "difficultyLevel", "type": "uint256" },
-      { "internalType": "uint256", "name": "baseRewardAmount", "type": "uint256" },
-      { "internalType": "bool", "name": "isClosed", "type": "bool" },
-      { "internalType": "uint8", "name": "mode", "type": "uint8" },
-      { "internalType": "uint256", "name": "blockCreationTime", "type": "uint256" },
-      { "internalType": "uint256", "name": "firstCorrectAnswerTime", "type": "uint256" },
-      { "internalType": "address", "name": "firstSolverAddress", "type": "address" },
-      { "internalType": "address[]", "name": "poolCorrectSolvers", "type": "address[]" }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  // From QuizGameBaseFacet - Get Next Question ID
-  {
-    "inputs": [],
-    "name": "getNextQuestionId",
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "view",
-    "type": "function"
-  }
-];
+const useBlockchain = () => {
+  const [userAccount, setUserAccount] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isCorrectNetwork, setIsCorrectNetwork] = useState(false);
+  const [qzcBalance, setQzcBalance] = useState("0.00");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-// QuizCoin ERC20 ABI for balance checking
-const QuizCoinABI = [
-  {
-    "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
-    "name": "balanceOf",
-    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "decimals",
-    "outputs": [{ "internalType": "uint8", "name": "", "type": "uint8" }],
-    "stateMutability": "view",
-    "type": "function"
-  }
-];
-
-export const useBlockchain = (userAccount) => {
-  const [quizDiamondContract, setQuizDiamondContract] = useState(null);
-  const [quizCoinContract, setQuizCoinContract] = useState(null);
-  const [qzcBalance, setQzcBalance] = useState("0");
-
-  // Initialize contracts
-  useEffect(() => {
-    const setupContract = async () => {
-      if (!window.ethereum || !userAccount) {
-        return;
-      }
-
-      try {
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        
-        // Initialize QuizGameDiamond contract
-        const quizContract = new ethers.Contract(
-          contractAddresses.QuizGameDiamond, 
-          combinedQuizDiamondABI, 
-          signer
-        );
-        setQuizDiamondContract(quizContract);
-        
-        // Initialize QuizCoin contract for balance checking
-        const coinContract = new ethers.Contract(
-          contractAddresses.QuizCoin,
-          QuizCoinABI,
-          provider
-        );
-        setQuizCoinContract(coinContract);
-        
-        console.log("✅ Contracts initialized");
-        console.log("QuizGameDiamond:", contractAddresses.QuizGameDiamond);
-        console.log("QuizCoin:", contractAddresses.QuizCoin);
-        
-        // Load real QZC balance
-        await loadQzcBalance(coinContract);
-      } catch (error) {
-        console.error("Contract setup error:", error);
-        throw new Error("เกิดข้อผิดพลาดในการตั้งค่าสัญญา: " + error.message);
-      }
-    };
-    setupContract();
-  }, [userAccount]);
-
-  // Load real QZC balance from blockchain
-  const loadQzcBalance = async (coinContract = null) => {
+  // Debug: ตรวจสอบคำถามที่มีอยู่
+  const debugAvailableQuestions = useCallback(async () => {
     try {
-      if (!userAccount) return;
+      console.log('🔍 Debugging available questions...');
       
-      const contract = coinContract || quizCoinContract;
-      if (!contract) return;
+      // 1. เช็คใน database
+      const dbResponse = await fetch('/api/debug/questions');
+      const dbData = await dbResponse.json();
       
-      const balance = await contract.balanceOf(userAccount);
-      const decimals = await contract.decimals();
-      const formattedBalance = ethers.formatUnits(balance, decimals);
-      setQzcBalance(parseFloat(formattedBalance).toFixed(2));
+      console.log('📚 Database questions:', dbData);
       
-      console.log("QZC Balance loaded:", formattedBalance);
+      // 2. เช็คใน smart contract
+      if (blockchainService.quizDiamondContract) {
+        const availableQuestions = await blockchainService.findAvailableQuestions();
+        console.log('⛓️ Smart contract questions:', availableQuestions);
+        
+        return {
+          database: dbData,
+          smartContract: availableQuestions
+        };
+      }
+      
+      return { database: dbData, smartContract: [] };
     } catch (error) {
-      console.error("Error loading QZC balance:", error);
-      // Keep existing balance on error
-    }
-  };
-
-  // Submit answer to blockchain via MetaMask
-  const submitAnswerOnChain = async (quizId, selectedOption, availableQuizzes, onProgress) => {
-    try {
-      if (!quizDiamondContract) {
-        throw new Error("สัญญา QuizGameDiamond ยังไม่พร้อม");
-      }
-
-      onProgress && onProgress("🔍 กำลังเตรียมข้อมูล Merkle proof...");
-      
-      // Step 1: Generate Merkle proof from backend
-      const proofData = await generateMerkleProof(quizId, selectedOption);
-      if (!proofData || !proofData.isValid) {
-        throw new Error("ไม่สามารถสร้าง Merkle proof ที่ถูกต้องได้");
-      }
-
-      onProgress && onProgress("⚡ กำลังส่งธุรกรรมผ่าน MetaMask...");
-      
-      // Step 2: Convert quizId to questionId (use array index)
-      const questionId = availableQuizzes.findIndex(q => q.quizId === quizId);
-      if (questionId === -1) {
-        throw new Error("ไม่พบคำถามที่เลือก");
-      }
-
-      console.log("Submitting answer for questionId:", questionId);
-      console.log("Answer leaf:", proofData.leaf);
-
-      // Step 3: Submit answer to smart contract
-      const tx = await quizDiamondContract.submitAnswer(
-        questionId,
-        proofData.leaf,
-        proofData.proof
-      );
-
-      onProgress && onProgress("⏳ กำลังรอการยืนยันธุรกรรม...");
-      console.log("Transaction sent:", tx.hash);
-
-      // Step 4: Wait for transaction confirmation
-      const receipt = await tx.wait();
-      console.log("Transaction confirmed:", receipt);
-
-      onProgress && onProgress("📊 กำลังอัพเดทยอดคงเหลือ...");
-
-      // Step 5: Update QZC balance
-      await loadQzcBalance();
-
-      // Step 6: Parse transaction receipt for reward amount
-      let earnedAmount = 100; // Default fallback
-      
-      // Try to extract reward amount from logs
-      if (receipt.logs && receipt.logs.length > 0) {
-        receipt.logs.forEach(log => {
-          try {
-            earnedAmount = Math.floor(Math.random() * 200 + 100);
-          } catch (e) {
-            console.log("Could not decode log:", e);
-          }
-        });
-      }
-
-      onProgress && onProgress(`🎉 คำตอบถูกต้อง! ธุรกรรมสำเร็จ! คุณได้รับ ${earnedAmount} QZC!`);
-
-      return {
-        success: true,
-        txHash: tx.hash,
-        earnedAmount: earnedAmount
-      };
-
-    } catch (error) {
-      console.error("Blockchain transaction error:", error);
-      
-      // Handle specific error types
-      let errorMessage;
-      if (error.code === 4001) {
-        errorMessage = "❌ ธุรกรรมถูกยกเลิกโดยผู้ใช้";
-      } else if (error.code === -32603) {
-        errorMessage = "❌ เกิดข้อผิดพลาดในการเชื่อมต่อ RPC";
-      } else if (error.message.includes("insufficient funds")) {
-        errorMessage = "❌ BNB ไม่เพียงพอสำหรับค่าธรรมเนียมแก๊ส";
-      } else if (error.message.includes("Question does not exist")) {
-        errorMessage = "❌ คำถามยังไม่ถูกสร้างใน Smart Contract กรุณารอสักครู่";
-      } else {
-        errorMessage = `❌ เกิดข้อผิดพลาด: ${error.reason || error.message}`;
-      }
-      
-      throw new Error(errorMessage);
-    }
-  };
-
-  // Generate Merkle proof by calling backend API
-  const generateMerkleProof = async (quizId, answer) => {
-    try {
-      console.log("Calling backend for Merkle proof:", { quizId, answer });
-      
-      const response = await fetch('http://localhost:3000/api/generate-merkle-proof', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          quizId: quizId,
-          answer: answer.toLowerCase().trim()
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP ${response.status}`);
-      }
-
-      const proofData = await response.json();
-      
-      if (!proofData.success) {
-        throw new Error(proofData.error || 'Failed to generate proof');
-      }
-
-      console.log("Received Merkle proof from backend:", proofData);
-
-      return {
-        leaf: proofData.leaf,
-        proof: proofData.proof || [],
-        isValid: proofData.isValid,
-        batchId: proofData.batchId
-      };
-      
-    } catch (error) {
-      console.error("Error generating Merkle proof:", error);
+      console.error('Debug error:', error);
       return null;
     }
-  };
+  }, []);
+
+  // Update QZC balance
+  const updateBalance = useCallback(async (account) => {
+    try {
+      if (!account || !blockchainService.quizCoinContract) return;
+      
+      const balance = await blockchainService.getQZCBalance(account);
+      setQzcBalance(balance);
+      console.log('💰 Updated QZC balance:', balance);
+    } catch (error) {
+      console.error('Failed to update balance:', error);
+      // Don't set error state for balance updates to avoid blocking UI
+    }
+  }, []);
+
+  // Submit answer with enhanced validation
+  const submitAnswer = useCallback(async (quizId, answer, onProgress) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      if (!userAccount) {
+        throw new Error('Wallet not connected');
+      }
+
+      if (!isCorrectNetwork) {
+        throw new Error('Please switch to BNB Smart Chain Testnet');
+      }
+
+      // 🔍 Debug: ตรวจสอบ quiz data ก่อนส่ง
+      console.log('🎯 Submitting answer:', { quizId, answer });
+      
+      // ตรวจสอบว่า quiz มี questionId หรือไม่
+      if (quizId && typeof quizId === 'object' && quizId.questionId) {
+        console.log('✅ Quiz has questionId:', quizId.questionId);
+      } else {
+        console.warn('⚠️ Quiz missing questionId, will generate one');
+      }
+
+      // Enhanced progress tracking
+      const enhancedOnProgress = (message) => {
+        console.log('📊 Progress:', message);
+        if (onProgress) onProgress(message);
+      };
+
+      // Submit answer via blockchain service
+      const result = await blockchainService.submitAnswer(
+        quizId, 
+        answer, 
+        enhancedOnProgress
+      );
+
+      // Record answer in backend if blockchain transaction successful
+      if (result.success) {
+        try {
+          await blockchainService.recordAnswer({
+            userAccount,
+            quizId: typeof quizId === 'object' ? quizId.quizId : quizId,
+            questionId: result.questionId,
+            answer,
+            correct: true,
+            mode: 'solo',
+            rewardAmount: result.rewardInfo.totalReward,
+            txHash: result.txHash
+          });
+          console.log('✅ Answer recorded in backend');
+        } catch (recordError) {
+          console.warn('⚠️ Failed to record answer in backend:', recordError);
+          // Don't throw here as blockchain transaction was successful
+        }
+
+        // Update balance after successful transaction
+        await updateBalance(userAccount);
+        
+        console.log('🎉 Transaction completed successfully!', result);
+      }
+
+      return result;
+    } catch (error) {
+      console.error('❌ Failed to submit answer:', error);
+      
+      // Enhanced error handling
+      let errorMessage = handleBlockchainError(error, 'during answer submission');
+      
+      // Add specific guidance for common errors
+      if (error.message.includes('Question does not exist')) {
+        errorMessage += '\n\n💡 Tips:\n- ตรวจสอบว่ามีคำถามใน Smart Contract\n- ลองรีเฟรชหน้าและเลือกคำถามใหม่\n- ติดต่อผู้พัฒนาถ้าปัญหายังคงมีอยู่';
+      }
+      
+      setError(errorMessage);
+      throw new Error(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userAccount, isCorrectNetwork, updateBalance]);
+
+  // Enhanced connect wallet with debug
+  const connectWallet = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const accounts = await blockchainService.connectWallet();
+      
+      if (!accounts || accounts.length === 0) {
+        throw new Error('No accounts found');
+      }
+
+      setUserAccount(accounts[0]);
+      console.log('👛 Wallet connected:', accounts[0]);
+
+      // Initialize blockchain service
+      await blockchainService.initialize();
+
+      // Check network
+      const networkOk = await blockchainService.checkNetwork();
+      if (!networkOk) {
+        const switched = await blockchainService.switchToBNBTestnet();
+        setIsCorrectNetwork(switched);
+        
+        if (!switched) {
+          throw new Error('Please switch to BNB Smart Chain Testnet');
+        }
+      } else {
+        setIsCorrectNetwork(true);
+      }
+
+      setIsConnected(true);
+      await updateBalance(accounts[0]);
+
+      // 🔍 Debug: ตรวจสอบคำถามที่มีอยู่หลังจากเชื่อมต่อ
+      setTimeout(async () => {
+        const debugInfo = await debugAvailableQuestions();
+        console.log('🔍 Debug info after wallet connection:', debugInfo);
+      }, 2000);
+
+      return accounts[0];
+    } catch (error) {
+      console.error('Failed to connect wallet:', error);
+      setError(handleBlockchainError(error, 'during wallet connection'));
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [debugAvailableQuestions, updateBalance]);
+
+  // Disconnect wallet
+  const disconnectWallet = useCallback(() => {
+    setUserAccount(null);
+    setIsConnected(false);
+    setIsCorrectNetwork(false);
+    setQzcBalance("0.00");
+    setError(null);
+    blockchainService.disconnect();
+    console.log('👛 Wallet disconnected');
+  }, []);
+
+  // Get user statistics
+  const getUserStats = useCallback(async () => {
+    try {
+      if (!userAccount) return null;
+      
+      return await blockchainService.getUserStats(userAccount);
+    } catch (error) {
+      console.error('Failed to get user stats:', error);
+      return null;
+    }
+  }, [userAccount]);
+
+  // Get available quizzes with enhanced validation
+  const getAvailableQuizzes = useCallback(async () => {
+    try {
+      if (!userAccount) return [];
+      
+      console.log('📚 Fetching available quizzes...');
+      const quizzes = await blockchainService.getAvailableQuizzes(userAccount);
+      
+      // Validate and enhance quiz data
+      const enhancedQuizzes = quizzes.map(quiz => {
+        // Ensure quiz has required fields
+        const enhanced = {
+          ...quiz,
+          questionId: quiz.questionId || blockchainService.extractQuestionId(quiz.quizId || quiz.id),
+          id: quiz.quizId || quiz.id
+        };
+        
+        console.log('📋 Enhanced quiz:', {
+          dbId: enhanced.id,
+          questionId: enhanced.questionId,
+          difficultyLevel: enhanced.difficultyLevel
+        });
+        
+        return enhanced;
+      });
+      
+      console.log(`✅ Fetched ${enhancedQuizzes.length} available quizzes`);
+      return enhancedQuizzes;
+    } catch (error) {
+      console.error('Failed to get available quizzes:', error);
+      return [];
+    }
+  }, [userAccount]);
+
+  // Switch network
+  const switchNetwork = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const success = await blockchainService.switchToBNBTestnet();
+      setIsCorrectNetwork(success);
+      
+      if (success) {
+        console.log('🌐 Switched to BNB Smart Chain Testnet');
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('Failed to switch network:', error);
+      setError(handleBlockchainError(error, 'during network switch'));
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Auto-connect on page load
+  useEffect(() => {
+    const autoConnect = async () => {
+      try {
+        if (window.ethereum && window.ethereum.selectedAddress) {
+          console.log('🔄 Auto-connecting wallet...');
+          await connectWallet();
+        }
+      } catch (error) {
+        console.log('Auto-connect failed:', error);
+      }
+    };
+
+    autoConnect();
+  }, [connectWallet]);
+
+  // Listen for account changes
+  useEffect(() => {
+    if (window.ethereum) {
+      const handleAccountsChanged = (accounts) => {
+        if (accounts.length === 0) {
+          disconnectWallet();
+        } else if (accounts[0] !== userAccount) {
+          setUserAccount(accounts[0]);
+          updateBalance(accounts[0]);
+          console.log('👛 Account changed to:', accounts[0]);
+        }
+      };
+
+      const handleChainChanged = (chainId) => {
+        console.log('🌐 Chain changed to:', chainId);
+        setIsCorrectNetwork(chainId === '0x61'); // BNB Testnet
+      };
+
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+
+      return () => {
+        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
+      };
+    }
+  }, [userAccount, disconnectWallet, updateBalance]);
 
   return {
-    quizDiamondContract,
-    quizCoinContract,
+    // State
+    userAccount,
+    isConnected,
+    isCorrectNetwork,
     qzcBalance,
-    loadQzcBalance,
-    submitAnswerOnChain
+    isLoading,
+    error,
+    
+    // Actions
+    connectWallet,
+    disconnectWallet,
+    switchNetwork,
+    submitAnswer,
+    updateBalance,
+    getUserStats,
+    getAvailableQuizzes,
+    debugAvailableQuestions,
+    
+    // Utilities
+    formatAddress: (addr) => blockchainService.formatAddress(addr),
+    formatTxHash: (hash) => blockchainService.formatTxHash(hash),
+    clearError: () => setError(null)
   };
 };
+
+// ✅ CRITICAL: Export the hook as named export
+export { useBlockchain };
+
+// Also export as default for flexibility
+export default useBlockchain;

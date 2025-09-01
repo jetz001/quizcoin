@@ -116,7 +116,210 @@ export class BlockchainService {
       return false;
     }
   }
+   // 🔍 Debug: ตรวจสอบ question บน smart contract
+  async debugQuestionExists(questionId) {
+    try {
+      console.log(`🔍 Checking if question ${questionId} exists on smart contract`);
+      
+      const questionInfo = await this.quizDiamondContract.getQuestion(questionId);
+      
+      console.log('📊 Question info:', {
+        questionId,
+        correctAnswerHash: questionInfo[0],
+        hintHash: questionInfo[1],
+        questionCreator: questionInfo[2],
+        difficultyLevel: questionInfo[3].toString(),
+        baseRewardAmount: ethers.formatEther(questionInfo[4]),
+        isClosed: questionInfo[5]
+      });
+      
+      return questionInfo[0] !== '0x0000000000000000000000000000000000000000000000000000000000000000';
+    } catch (error) {
+      console.error(`❌ Question ${questionId} does not exist:`, error);
+      return false;
+    }
+  }
 
+  // 🔍 Debug: หา question IDs ที่มีอยู่จริง
+  async findAvailableQuestions() {
+    try {
+      console.log('🔍 Scanning for available questions...');
+      const availableQuestions = [];
+      
+      // สแกนหา question IDs ที่มีอยู่ (จำกัดเพื่อไม่ให้ใช้ gas มากเกินไป)
+      for (let i = 1; i <= 100; i++) {
+        try {
+          const exists = await this.debugQuestionExists(i);
+          if (exists) {
+            availableQuestions.push(i);
+          }
+        } catch (error) {
+          // Skip non-existent questions
+          break;
+        }
+      }
+      
+      console.log('✅ Available question IDs:', availableQuestions);
+      return availableQuestions;
+    } catch (error) {
+      console.error('Error finding available questions:', error);
+      return [];
+    }
+  }
+
+  // 🛠️ แก้ไข: ปรับปรุง extractQuestionId
+  extractQuestionId(quizId) {
+    console.log('🔍 Extracting questionId from quizId:', quizId);
+    
+    // ถ้าใน database มีการเก็บ questionId ไว้แล้ว ให้ใช้ตัวนั้น
+    if (quizId && typeof quizId === 'object' && quizId.questionId) {
+      console.log('📊 Using stored questionId:', quizId.questionId);
+      return quizId.questionId;
+    }
+    
+    // ถ้า quizId เป็น string ที่มีตัวเลข
+    if (typeof quizId === 'string') {
+      const match = quizId.match(/\d+/);
+      if (match) {
+        const id = parseInt(match[0], 10);
+        console.log('📊 Extracted questionId (string method):', id);
+        // ตรวจสอบว่าไม่ใช่ 0
+        if (id > 0) {
+          return id;
+        }
+      }
+    }
+    
+    // ถ้า quizId เป็นตัวเลขแล้ว
+    if (typeof quizId === 'number' && quizId > 0) {
+      console.log('📊 Using questionId directly (number):', quizId);
+      return quizId;
+    }
+    
+    // Fallback: สร้าง deterministic ID จาก quizId string
+    if (quizId && typeof quizId === 'string') {
+      let hash = 0;
+      for (let i = 0; i < quizId.length; i++) {
+        const char = quizId.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+      }
+      const id = Math.abs(hash) % 1000 + 1; // ลดช่วงให้เล็กลง
+      console.log('📊 Generated questionId from hash:', id);
+      return id;
+    }
+    
+    console.warn('⚠️ Could not extract valid questionId, using default');
+    return 1; // Default แทน 0
+  }
+
+  // 🛠️ แก้ไข: ปรับปรุง submitAnswer ให้มีการ validate
+  async submitAnswer(quizId, answer, onProgress) {
+    try {
+      if (!this.signer) {
+        throw new Error('No signer available');
+      }
+
+      // Step 1: Generate Merkle proof
+      onProgress && onProgress('🔍 กำลังสร้าง Merkle proof...');
+      const proofData = await this.generateMerkleProof(quizId, answer);
+
+      if (!proofData || !proofData.isValid) {
+        throw new Error('Invalid Merkle proof generated');
+      }
+
+      // Step 2: Extract question ID
+      const questionId = this.extractQuestionId(quizId);
+      
+      // Step 3: Validate question exists บน smart contract
+      onProgress && onProgress('🔍 กำลังตรวจสอบคำถามบน Smart Contract...');
+      const questionExists = await this.debugQuestionExists(questionId);
+      
+      if (!questionExists) {
+        console.error(`❌ Question ${questionId} does not exist on smart contract`);
+        
+        // พยายามหา question IDs ที่มีอยู่
+        const availableQuestions = await this.findAvailableQuestions();
+        
+        if (availableQuestions.length > 0) {
+          const suggestedId = availableQuestions[0];
+          console.log(`💡 Suggesting question ID: ${suggestedId}`);
+          throw new Error(`Question ${questionId} not found. Available questions: ${availableQuestions.join(', ')}`);
+        } else {
+          throw new Error('No questions available on smart contract. Please create questions first.');
+        }
+      }
+
+      // Step 4: Verify proof on-chain (optional)
+      onProgress && onProgress('⚡ กำลังตรวจสอบด้วย Merkle Tree...');
+      const isValidOnChain = await this.verifyMerkleProof(proofData.leaf, proofData.proof);
+      
+      if (!isValidOnChain) {
+        console.warn('On-chain verification failed, proceeding anyway');
+      }
+
+      // Step 5: Estimate gas
+      onProgress && onProgress('⛽ กำลังคำนวณค่า gas...');
+      const contractWithSigner = this.quizDiamondContract.connect(this.signer);
+      
+      let gasEstimate;
+      try {
+        gasEstimate = await contractWithSigner.submitAnswer.estimateGas(
+          questionId,
+          proofData.leaf,
+          proofData.proof
+        );
+      } catch (estimateError) {
+        console.warn('Gas estimation failed:', estimateError);
+        gasEstimate = BigInt(500000); // Fallback gas limit
+      }
+
+      // Add 20% buffer to gas estimate
+      const gasLimit = gasEstimate * BigInt(120) / BigInt(100);
+
+      // Step 6: Submit transaction
+      onProgress && onProgress('📝 กำลังส่งธุรกรรมไปยัง Smart Contract...');
+      
+      const tx = await contractWithSigner.submitAnswer(
+        questionId,
+        proofData.leaf,
+        proofData.proof,
+        { gasLimit }
+      );
+
+      onProgress && onProgress(`⏳ รอการยืนยันธุรกรรม... ${tx.hash.slice(0, 10)}...`);
+
+      // Step 7: Wait for confirmation
+      const receipt = await tx.wait();
+
+      // Step 8: Parse events for rewards
+      const rewardInfo = this.parseRewardEvents(receipt);
+
+      return {
+        success: true,
+        txHash: tx.hash,
+        receipt: receipt,
+        rewardInfo: rewardInfo,
+        gasUsed: receipt.gasUsed.toString(),
+        effectiveGasPrice: receipt.effectiveGasPrice?.toString(),
+        questionId: questionId
+      };
+
+    } catch (error) {
+      console.error('Error submitting answer:', error);
+      
+      // Handle specific error types
+      if (error.code === 4001) {
+        throw new Error('Transaction rejected by user');
+      } else if (error.message.includes('insufficient funds')) {
+        throw new Error('Insufficient BNB for gas fees');
+      } else if (error.reason) {
+        throw new Error(`Smart contract error: ${error.reason}`);
+      } else {
+        throw new Error(`Transaction failed: ${error.message}`);
+      }
+    }
+  }
   // Check if connected to correct network
   async checkNetwork() {
     try {
@@ -308,15 +511,47 @@ export class BlockchainService {
   }
 
   // Extract question ID from quiz ID
-  extractQuestionId(quizId) {
-    // Extract numbers from quizId and convert to integer
+extractQuestionId(quizId) {
+  console.log('🔍 Extracting questionId from quizId:', quizId);
+  
+  // Method 1: ถ้า quizId เป็น string ที่มีตัวเลข
+  if (typeof quizId === 'string') {
     const match = quizId.match(/\d+/);
     if (match) {
-      return parseInt(match[0], 10);
+      const id = parseInt(match[0], 10);
+      console.log('📊 Extracted questionId (string method):', id);
+      // ตรวจสอบว่าไม่ใช่ 0 เพราะ smart contract อาจไม่มี question ID 0
+      if (id > 0) {
+        return id;
+      }
     }
-    // Fallback: use timestamp-based ID
-    return Math.floor(Date.now() / 1000) % 1000000;
   }
+  
+  // Method 2: ถ้า quizId เป็นตัวเลขแล้ว
+  if (typeof quizId === 'number' && quizId > 0) {
+    console.log('📊 Using questionId directly (number):', quizId);
+    return quizId;
+  }
+  
+  // Method 3: ลองใช้ hash ของ quizId
+  if (quizId && typeof quizId === 'string') {
+    // สร้าง deterministic ID จาก quizId string
+    let hash = 0;
+    for (let i = 0; i < quizId.length; i++) {
+      const char = quizId.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    const id = Math.abs(hash) % 1000000 + 1; // +1 เพื่อไม่ให้เป็น 0
+    console.log('📊 Generated questionId from hash:', id);
+    return id;
+  }
+  
+  // Method 4: Fallback - ใช้ timestamp แต่ไม่ให้เป็น 0
+  const fallbackId = (Math.floor(Date.now() / 1000) % 1000000) + 1; // +1 เพื่อไม่ให้เป็น 0
+  console.log('📊 Using fallback questionId:', fallbackId);
+  return fallbackId;
+}
 
   // Parse reward events from transaction receipt
   parseRewardEvents(receipt) {
