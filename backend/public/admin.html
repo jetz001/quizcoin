@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QuizCoin Admin Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; color: white; margin-bottom: 30px; }
+        .header h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+        
+        .wallet-section {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .btn-secondary { background: linear-gradient(135deg, #ff7b7b 0%, #e94e4e 100%); }
+        .btn-success { background: linear-gradient(135deg, #7bff7b 0%, #4ee94e 100%); }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .card h3 { margin-bottom: 20px; color: #333; font-size: 1.3rem; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 600; color: #555; }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .logs {
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            color: #00ff00;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 5px;
+            word-break: break-all;
+        }
+        .log-entry.error { color: #ff4444; }
+        .log-entry.warning { color: #ffaa00; }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>QuizCoin Admin Dashboard</h1>
+            <p>Manage your quiz game contracts and generate questions</p>
+        </div>
+        
+        <div class="wallet-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                <div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div id="statusDot" style="width: 12px; height: 12px; border-radius: 50%; background: #ff4444;"></div>
+                        <span id="walletStatus">Not Connected</span>
+                    </div>
+                </div>
+                <button class="btn" id="connectBtn" onclick="connectWallet()">Connect MetaMask</button>
+            </div>
+        </div>
+        
+        <div class="grid">
+            <div class="card">
+                <h3>Generate Quiz Questions</h3>
+                <div class="form-group">
+                    <label>Total Questions</label>
+                    <input type="number" id="totalQuestions" value="18" min="1" max="100">
+                </div>
+                <button class="btn" onclick="generateAndCommit()" id="generateCommitBtn">
+                    Generate & Commit On-Chain
+                </button>
+            </div>
+            
+            <div class="card">
+                <h3>Batch Management</h3>
+                <button class="btn btn-success" onclick="loadBatches()">Load Batches</button>
+                <div id="batchList" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+        
+        <div class="logs">
+            <div class="log-entry">Admin Dashboard Initialized</div>
+            <div class="log-entry">Ready to connect to MetaMask...</div>
+            <div id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let userAccount = null;
+        const BACKEND_URL = 'http://localhost:3000';
+        
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.innerHTML = `${new Date().toLocaleTimeString()} - ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        async function connectWallet() {
+            if (!window.ethereum) {
+                log('MetaMask not detected! Please install MetaMask.', 'error');
+                return;
+            }
+            
+            try {
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                userAccount = accounts[0];
+                
+                document.getElementById('statusDot').style.background = '#44ff44';
+                document.getElementById('walletStatus').textContent = `Connected: ${userAccount.slice(0,6)}...${userAccount.slice(-4)}`;
+                document.getElementById('connectBtn').textContent = 'Connected';
+                
+                log(`Connected to ${userAccount}`, 'success');
+            } catch (error) {
+                log(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+        
+        async function generateAndCommit() {
+            document.getElementById('generateCommitBtn').innerHTML = '<span class="loading"></span> Processing...';
+            document.getElementById('generateCommitBtn').disabled = true;
+            
+            log('Starting batch generation and commit...');
+            
+            try {
+                const response = await fetch(`${BACKEND_URL}/admin/generate-and-commit`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    log(`Batch generated and committed successfully!`, 'success');
+                    log(`Root: ${result.root}`, 'success');
+                    if (result.txs && result.txs.length > 0) {
+                        result.txs.forEach(tx => log(`Transaction: ${tx}`, 'success'));
+                    }
+                } else {
+                    log(`Operation failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Operation error: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('generateCommitBtn').innerHTML = 'Generate & Commit On-Chain';
+                document.getElementById('generateCommitBtn').disabled = false;
+            }
+        }
+        
+        async function loadBatches() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/admin/batches`);
+                const result = await response.json();
+                
+                const batchList = document.getElementById('batchList');
+                batchList.innerHTML = '';
+                
+                if (result.batches && result.batches.length > 0) {
+                    result.batches.forEach(batch => {
+                        const batchDiv = document.createElement('div');
+                        batchDiv.style.cssText = 'background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; margin-bottom: 10px;';
+                        batchDiv.innerHTML = `
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <strong>Batch ${batch.batchId}</strong>
+                                <span style="padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; background: #44ff44; color: white;">${batch.status}</span>
+                            </div>
+                            <div>Questions: ${batch.totalQuestions || 'N/A'}</div>
+                            ${batch.root ? `<div>Root: ${batch.root.slice(0, 20)}...</div>` : ''}
+                        `;
+                        batchList.appendChild(batchDiv);
+                    });
+                    log(`Loaded ${result.batches.length} batches`, 'success');
+                } else {
+                    batchList.innerHTML = '<div>No batches found</div>';
+                }
+            } catch (error) {
+                log(`Failed to load batches: ${error.message}`, 'error');
+            }
+        }
+        
+        // Auto-connect on page load
+        window.addEventListener('load', async () => {
+            if (window.ethereum) {
+                try {
+                    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                    if (accounts.length > 0) {
+                        connectWallet();
+                    }
+                } catch (error) {
+                    console.error('Failed to get accounts:', error);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
