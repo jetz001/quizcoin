@@ -1,11 +1,11 @@
-// backend/services/quiz.js
-const { 
+// backend/services/quiz.js - Fixed for ES modules
+import { 
   storeQuestionToFirestore, 
   storeMerkleLeaf, 
   createBatchDocument, 
   updateBatchProgress 
-} = require('./firebase');
-const { createAnswerLeaf, finalizeBatch } = require('./merkle');
+} from './firebase.js';
+import { createAnswerLeaf, finalizeBatch } from './merkle.js';
 
 // Configuration
 const DEFAULT_CONFIG = {
@@ -22,7 +22,7 @@ const SUB_BATCH_DELAY = parseInt(process.env.SUB_BATCH_DELAY || DEFAULT_CONFIG.S
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
 
-// Call Gemini API
+// Call Gemini API (using global fetch in Node.js 18+)
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) {
     throw new Error("Gemini API key not configured");
@@ -49,7 +49,7 @@ async function callGemini(prompt) {
 }
 
 // Generate a single quiz question using AI
-async function generateQuizQuestion() {
+export async function generateQuizQuestion() {
   const prompt = `Generate a quiz question about general knowledge, science, history, or technology.
 The question must have four options, and only one correct answer.
 Output JSON:
@@ -74,12 +74,12 @@ Output JSON:
 }
 
 // Generate unique batch ID
-function makeBatchId() {
+export function makeBatchId() {
   return Math.floor(Date.now() / 1000);
 }
 
 // Generate a complete batch of questions
-async function generateQuestionBatch(totalQuestions = TOTAL_QUESTIONS, subBatchSize = SUB_BATCH_SIZE, batchId = null) {
+export async function generateQuestionBatch(totalQuestions = TOTAL_QUESTIONS, subBatchSize = SUB_BATCH_SIZE, batchId = null) {
   const bid = batchId || makeBatchId();
   console.log(`🔧 Generating batch ${bid} (${totalQuestions} questions, subBatchSize=${subBatchSize})`);
   
@@ -166,7 +166,7 @@ async function generateQuestionBatch(totalQuestions = TOTAL_QUESTIONS, subBatchS
 }
 
 // Generate single question for testing
-async function generateSingleQuestion() {
+export async function generateSingleQuestion() {
   try {
     const quizData = await generateQuizQuestion();
     if (!quizData) {
@@ -192,7 +192,7 @@ async function generateSingleQuestion() {
 }
 
 // Validate quiz question format
-function validateQuizQuestion(quizData) {
+export function validateQuizQuestion(quizData) {
   if (!quizData) return false;
   
   const requiredFields = ['question', 'options', 'answer'];
@@ -217,7 +217,7 @@ function validateQuizQuestion(quizData) {
 }
 
 // Get batch generation status
-async function getBatchGenerationStatus() {
+export async function getBatchGenerationStatus() {
   return {
     config: {
       totalQuestions: TOTAL_QUESTIONS,
@@ -229,12 +229,3 @@ async function getBatchGenerationStatus() {
     }
   };
 }
-
-module.exports = {
-  generateQuizQuestion,
-  generateQuestionBatch,
-  generateSingleQuestion,
-  validateQuizQuestion,
-  getBatchGenerationStatus,
-  makeBatchId
-};

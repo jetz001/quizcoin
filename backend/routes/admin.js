@@ -1,10 +1,11 @@
-// backend/routes/admin.js
-const express = require('express');
+// backend/routes/admin.js - Fixed for ES modules
+import express from 'express';
+import { generateQuestionBatch, getBatchGenerationStatus } from '../services/quiz.js';
+import { commitBatchToBlockchain, saveBatchOffchain } from '../services/merkle.js';
+import { getBatch } from '../services/firebase.js';
+import { checkContractHealth } from '../services/blockchain.js';
+
 const router = express.Router();
-const { generateQuestionBatch, getBatchGenerationStatus } = require('../services/quiz');
-const { commitBatchToBlockchain, saveBatchOffchain } = require('../services/merkle');
-const { getBatch } = require('../services/firebase');
-const { checkContractHealth } = require('../services/blockchain');
 
 // Generate new batch of questions
 router.post('/generate-batch', async (req, res) => {
@@ -22,6 +23,225 @@ router.post('/generate-batch', async (req, res) => {
       message: `Batch ${result.batchId} generated successfully`,
       ...result 
     });
+  } catch (error) {
+    console.error("❌ Error in /admin/generate-batch:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Commit existing batch to blockchain
+router.post('/commit-batch', async (req, res) => {
+  try {
+    const { batchId } = req.body;
+    
+    if (!batchId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "batchId is required" 
+      });
+    }
+
+    console.log(`🔗 Starting commit process for batch ${batchId}`);
+
+    // Check if batch exists and is ready
+    const batchData = await getBatch(parseInt(batchId));
+    if (!batchData) {
+      return res.status(404).json({
+        success: false,
+        error: "Batch not found"
+      });
+    }
+
+    if (batchData.status !== 'ready') {
+      return res.status(400).json({
+        success: false,
+        error: `Batch status is '${batchData.status}', expected 'ready'`
+      });
+    }
+
+    const merkleContract = req.app.locals.merkleContract;
+    
+    let result;
+    if (merkleContract) {
+      // Commit to blockchain
+      result = await commitBatchToBlockchain(parseInt(batchId), merkleContract);
+    } else {
+      // Save off-chain only
+      console.warn("⚠️ No blockchain connection, saving off-chain only");
+      result = await saveBatchOffchain(parseInt(batchId));
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: `Batch ${batchId} committed successfully`,
+      ...result 
+    });
+  } catch (error) {
+    console.error("❌ Error in /admin/commit-batch:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Generate and commit in one operation
+router.post('/generate-and-commit', async (req, res) => {
+  try {
+    const { totalQuestions, subBatchSize } = req.body;
+    
+    console.log(`🔧 Starting generate-and-commit process...`);
+    
+    // Generate batch
+    const generateResult = await generateQuestionBatch(totalQuestions, subBatchSize);
+    console.log(`✅ Batch ${generateResult.batchId} generated, now committing...`);
+    
+    const merkleContract = req.app.locals.merkleContract;
+    
+    let commitResult;
+    if (merkleContract) {
+      // Commit to blockchain
+      commitResult = await commitBatchToBlockchain(generateResult.batchId, merkleContract);
+    } else {
+      // Save off-chain only
+      console.warn("⚠️ No blockchain connection, saving off-chain only");
+      commitResult = await saveBatchOffchain(generateResult.batchId);
+    }
+
+    console.log(`🎉 Generate-and-commit completed for batch ${generateResult.batchId}`);
+
+    res.status(200).json({ 
+      success: true,
+      message: `Batch ${generateResult.batchId} generated and committed successfully`,
+      generation: generateResult,
+      commit: commitResult
+    });
+  } catch (error) {
+    console.error("❌ Error in /admin/generate-and-commit:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get system configuration
+router.get('/config', async (req, res) => {
+  try {
+    const batchStatus = await getBatchGenerationStatus();
+    const contractHealth = await checkContractHealth();
+
+    const config = {
+      ...batchStatus,
+      blockchain: {
+        connected: contractHealth.accessible,
+        network: contractHealth.network || null,
+        contractAddress: process.env.CONTRACT_ADDRESS || null,
+        error: contractHealth.error || null
+      },
+      database: {
+        firebase: !!req.app.locals.db
+      }
+    };
+
+    res.json({
+      success: true,
+      config
+    });
+  } catch (error) {
+    console.error("❌ Error getting config:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get all batches
+router.get('/batches', async (req, res) => {
+  try {
+    const db = req.app.locals.db;
+    if (!db) {
+      return res.status(503).json({ 
+        success: false, 
+        error: "Firebase not available" 
+      });
+    }
+
+    const limit = parseInt(req.query.limit) || 20;
+    const status = req.query.status || null;
+
+    let query = db.collection('merkle_batches')
+      .orderBy('createdAt', 'desc')
+      .limit(limit);
+
+    if (status) {
+      query = query.where('status', '==', status);
+    }
+
+    const snapshot = await query.get();
+    const batches = snapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        batchId: data.batchId,
+        status: data.status,
+        totalQuestions: data.totalQuestions,
+        totalCreated: data.totalCreated || 0,
+        progress: data.progress || 0,
+        merkleRoot: data.merkleRoot || null,
+        createdAt: data.createdAt,
+        readyAt: data.readyAt || null,
+        committedAt: data.committedAt || null,
+        onChain: data.status === 'committed_onchain'
+      };
+    });
+
+    res.json({
+      success: true,
+      batches,
+      total: batches.length,
+      filters: { limit, status }
+    });
+
+  } catch (error) {
+    console.error("❌ Error getting batches:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get batch details
+router.get('/batch/:batchId', async (req, res) => {
+  try {
+    const { batchId } = req.params;
+
+    const batchData = await getBatch(parseInt(batchId));
+    if (!batchData) {
+      return res.status(404).json({
+        success: false,
+        error: "Batch not found"
+      });
+    }
+
+    // Include more detailed information for admin
+    const detailedBatch = {
+      ...batchData,
+      totalLeaves: batchData.leaves ? batchData.leaves.length : 0,
+      totalQuizIds: batchData.quizIds ? batchData.quizIds.length : 0,
+      onChain: batchData.status === 'committed_onchain',
+      hasTransactions: !!(batchData.txs && batchData.txs.length > 0)
+    };
+
+    res.json({
+      success: true,
+      batch: detailedBatch
+    });
+
   } catch (error) {
     console.error("❌ Error getting batch details:", error);
     res.status(500).json({ 
@@ -355,223 +575,4 @@ router.get('/', (req, res) => {
   res.send(html);
 });
 
-module.exports = router; Error in /admin/generate-batch:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Commit existing batch to blockchain
-router.post('/commit-batch', async (req, res) => {
-  try {
-    const { batchId } = req.body;
-    
-    if (!batchId) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "batchId is required" 
-      });
-    }
-
-    console.log(`🔗 Starting commit process for batch ${batchId}`);
-
-    // Check if batch exists and is ready
-    const batchData = await getBatch(parseInt(batchId));
-    if (!batchData) {
-      return res.status(404).json({
-        success: false,
-        error: "Batch not found"
-      });
-    }
-
-    if (batchData.status !== 'ready') {
-      return res.status(400).json({
-        success: false,
-        error: `Batch status is '${batchData.status}', expected 'ready'`
-      });
-    }
-
-    const merkleContract = req.app.locals.merkleContract;
-    
-    let result;
-    if (merkleContract) {
-      // Commit to blockchain
-      result = await commitBatchToBlockchain(parseInt(batchId), merkleContract);
-    } else {
-      // Save off-chain only
-      console.warn("⚠️ No blockchain connection, saving off-chain only");
-      result = await saveBatchOffchain(parseInt(batchId));
-    }
-
-    res.status(200).json({ 
-      success: true, 
-      message: `Batch ${batchId} committed successfully`,
-      ...result 
-    });
-  } catch (error) {
-    console.error("❌ Error in /admin/commit-batch:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Generate and commit in one operation
-router.post('/generate-and-commit', async (req, res) => {
-  try {
-    const { totalQuestions, subBatchSize } = req.body;
-    
-    console.log(`🔧 Starting generate-and-commit process...`);
-    
-    // Generate batch
-    const generateResult = await generateQuestionBatch(totalQuestions, subBatchSize);
-    console.log(`✅ Batch ${generateResult.batchId} generated, now committing...`);
-    
-    const merkleContract = req.app.locals.merkleContract;
-    
-    let commitResult;
-    if (merkleContract) {
-      // Commit to blockchain
-      commitResult = await commitBatchToBlockchain(generateResult.batchId, merkleContract);
-    } else {
-      // Save off-chain only
-      console.warn("⚠️ No blockchain connection, saving off-chain only");
-      commitResult = await saveBatchOffchain(generateResult.batchId);
-    }
-
-    console.log(`🎉 Generate-and-commit completed for batch ${generateResult.batchId}`);
-
-    res.status(200).json({ 
-      success: true,
-      message: `Batch ${generateResult.batchId} generated and committed successfully`,
-      generation: generateResult,
-      commit: commitResult
-    });
-  } catch (error) {
-    console.error("❌ Error in /admin/generate-and-commit:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Get system configuration
-router.get('/config', async (req, res) => {
-  try {
-    const batchStatus = await getBatchGenerationStatus();
-    const contractHealth = await checkContractHealth();
-
-    const config = {
-      ...batchStatus,
-      blockchain: {
-        connected: contractHealth.accessible,
-        network: contractHealth.network || null,
-        contractAddress: process.env.CONTRACT_ADDRESS || null,
-        error: contractHealth.error || null
-      },
-      database: {
-        firebase: !!req.app.locals.db
-      }
-    };
-
-    res.json({
-      success: true,
-      config
-    });
-  } catch (error) {
-    console.error("❌ Error getting config:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Get all batches
-router.get('/batches', async (req, res) => {
-  try {
-    const db = req.app.locals.db;
-    if (!db) {
-      return res.status(503).json({ 
-        success: false, 
-        error: "Firebase not available" 
-      });
-    }
-
-    const limit = parseInt(req.query.limit) || 20;
-    const status = req.query.status || null;
-
-    let query = db.collection('merkle_batches')
-      .orderBy('createdAt', 'desc')
-      .limit(limit);
-
-    if (status) {
-      query = query.where('status', '==', status);
-    }
-
-    const snapshot = await query.get();
-    const batches = snapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        batchId: data.batchId,
-        status: data.status,
-        totalQuestions: data.totalQuestions,
-        totalCreated: data.totalCreated || 0,
-        progress: data.progress || 0,
-        merkleRoot: data.merkleRoot || null,
-        createdAt: data.createdAt,
-        readyAt: data.readyAt || null,
-        committedAt: data.committedAt || null,
-        onChain: data.status === 'committed_onchain'
-      };
-    });
-
-    res.json({
-      success: true,
-      batches,
-      total: batches.length,
-      filters: { limit, status }
-    });
-
-  } catch (error) {
-    console.error("❌ Error getting batches:", error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
-
-// Get batch details
-router.get('/batch/:batchId', async (req, res) => {
-  try {
-    const { batchId } = req.params;
-
-    const batchData = await getBatch(parseInt(batchId));
-    if (!batchData) {
-      return res.status(404).json({
-        success: false,
-        error: "Batch not found"
-      });
-    }
-
-    // Include more detailed information for admin
-    const detailedBatch = {
-      ...batchData,
-      totalLeaves: batchData.leaves ? batchData.leaves.length : 0,
-      totalQuizIds: batchData.quizIds ? batchData.quizIds.length : 0,
-      onChain: batchData.status === 'committed_onchain',
-      hasTransactions: !!(batchData.txs && batchData.txs.length > 0)
-    };
-
-    res.json({
-      success: true,
-      batch: detailedBatch
-    });
-
-  } catch (error) {
-    console.error("❌
+export default router;

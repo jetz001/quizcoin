@@ -1,5 +1,5 @@
-// backend/services/blockchain.js
-const { ethers } = require('ethers');
+// backend/services/blockchain.js - Fixed for ES modules
+import { ethers } from 'ethers';
 
 // Merkle contract ABI
 const MERKLE_ABI = [
@@ -9,7 +9,7 @@ const MERKLE_ABI = [
 
 let provider, signer, merkleContract;
 
-async function initializeBlockchain() {
+export async function initializeBlockchain() {
   const PRIVATE_KEY = process.env.PRIVATE_KEY;
   const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
   const PROVIDER_URL = process.env.PROVIDER_URL;
@@ -35,7 +35,7 @@ async function initializeBlockchain() {
 }
 
 // Submit Merkle root to blockchain
-async function submitMerkleRoot(batchId, rootHex, leaves = [], gasLimit = 2_000_000) {
+export async function submitMerkleRoot(batchId, rootHex, leaves = [], gasLimit = 2_000_000) {
   if (!merkleContract) {
     throw new Error("Merkle contract not initialized");
   }
@@ -56,7 +56,7 @@ async function submitMerkleRoot(batchId, rootHex, leaves = [], gasLimit = 2_000_
 }
 
 // Submit Merkle root with leaves in chunks
-async function submitMerkleRootWithChunks(batchId, rootHex, leaves, chunkSize = 500, txDelay = 1) {
+export async function submitMerkleRootWithChunks(batchId, rootHex, leaves, chunkSize = 500, txDelay = 1) {
   if (!merkleContract) {
     throw new Error("Merkle contract not initialized");
   }
@@ -89,7 +89,7 @@ async function submitMerkleRootWithChunks(batchId, rootHex, leaves, chunkSize = 
 }
 
 // Verify Merkle proof on-chain
-async function verifyMerkleProofOnChain(leaf, proof) {
+export async function verifyMerkleProofOnChain(leaf, proof) {
   if (!merkleContract) {
     throw new Error("Merkle contract not initialized");
   }
@@ -104,7 +104,7 @@ async function verifyMerkleProofOnChain(leaf, proof) {
 }
 
 // Get current gas price
-async function getCurrentGasPrice() {
+export async function getCurrentGasPrice() {
   if (!provider) {
     return null;
   }
@@ -119,7 +119,7 @@ async function getCurrentGasPrice() {
 }
 
 // Check if contract is accessible
-async function checkContractHealth() {
+export async function checkContractHealth() {
   if (!merkleContract) {
     return { accessible: false, error: "Contract not initialized" };
   }
@@ -133,14 +133,6 @@ async function checkContractHealth() {
   }
 }
 
-module.exports = {
-  initializeBlockchain,
-  submitMerkleRoot,
-  submitMerkleRootWithChunks,
-  verifyMerkleProofOnChain,
-  getCurrentGasPrice,
-  checkContractHealth,
-  getProvider: () => provider,
-  getSigner: () => signer,
-  getMerkleContract: () => merkleContract
-};
+export const getProvider = () => provider;
+export const getSigner = () => signer;
+export const getMerkleContract = () => merkleContract;

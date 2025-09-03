@@ -1,8 +1,8 @@
-// backend/services/merkle.js
-const { ethers } = require('ethers');
-const { MerkleTree } = require('merkletreejs');
-const { getLeavesForBatch, completeBatch } = require('./firebase');
-const { submitMerkleRoot, submitMerkleRootWithChunks } = require('./blockchain');
+// backend/services/merkle.js - Fixed for ES modules
+import { ethers } from 'ethers';
+import { MerkleTree } from 'merkletreejs';
+import { getLeavesForBatch, completeBatch } from './firebase.js';
+import { submitMerkleRoot, submitMerkleRootWithChunks } from './blockchain.js';
 
 // Configuration
 const DEFAULT_CONFIG = {
@@ -16,12 +16,12 @@ const SUBMIT_CHUNK_SIZE = parseInt(process.env.SUBMIT_CHUNK_SIZE || DEFAULT_CONF
 const TX_DELAY = parseInt(process.env.TX_DELAY || DEFAULT_CONFIG.TX_DELAY.toString(), 10);
 
 // Create answer leaf hash
-function createAnswerLeaf(answer) {
+export function createAnswerLeaf(answer) {
   return ethers.keccak256(ethers.toUtf8Bytes(answer));
 }
 
 // Build Merkle tree from batch leaves
-async function buildMerkleTreeFromBatch(batchId) {
+export async function buildMerkleTreeFromBatch(batchId) {
   const leafData = await getLeavesForBatch(batchId);
   
   if (leafData.length === 0) {
@@ -38,7 +38,7 @@ async function buildMerkleTreeFromBatch(batchId) {
 }
 
 // Generate Merkle proof for a specific leaf
-function generateMerkleProof(tree, leaf) {
+export function generateMerkleProof(tree, leaf) {
   try {
     const proof = tree.getHexProof(leaf);
     const root = tree.getHexRoot();
@@ -57,7 +57,7 @@ function generateMerkleProof(tree, leaf) {
 }
 
 // Verify Merkle proof offline
-function verifyMerkleProof(proof, leaf, root) {
+export function verifyMerkleProof(proof, leaf, root) {
   try {
     return MerkleTree.verify(proof, leaf, root, ethers.keccak256, { sortPairs: true });
   } catch (error) {
@@ -67,7 +67,7 @@ function verifyMerkleProof(proof, leaf, root) {
 }
 
 // Generate proof for quiz answer
-async function generateProofForQuizAnswer(batchId, quizId, answer) {
+export async function generateProofForQuizAnswer(batchId, quizId, answer) {
   try {
     // Build tree from batch
     const { tree, rootHex, leafData } = await buildMerkleTreeFromBatch(batchId);
@@ -104,7 +104,7 @@ async function generateProofForQuizAnswer(batchId, quizId, answer) {
 }
 
 // Commit batch to blockchain
-async function commitBatchToBlockchain(batchId, merkleContract) {
+export async function commitBatchToBlockchain(batchId, merkleContract) {
   try {
     console.log(`🔗 Committing batch ${batchId} to blockchain...`);
     
@@ -136,7 +136,7 @@ async function commitBatchToBlockchain(batchId, merkleContract) {
 }
 
 // Save batch off-chain only
-async function saveBatchOffchain(batchId) {
+export async function saveBatchOffchain(batchId) {
   try {
     console.log(`💾 Saving batch ${batchId} off-chain only...`);
     
@@ -159,7 +159,7 @@ async function saveBatchOffchain(batchId) {
 }
 
 // Build tree and update batch with complete information
-async function finalizeBatch(batchId, allLeaves, allQuizIds) {
+export async function finalizeBatch(batchId, allLeaves, allQuizIds) {
   try {
     if (allLeaves.length === 0) {
       throw new Error("No leaves to build tree from");
@@ -187,7 +187,7 @@ async function finalizeBatch(batchId, allLeaves, allQuizIds) {
 }
 
 // Validate tree structure
-function validateMerkleTree(tree, leaves) {
+export function validateMerkleTree(tree, leaves) {
   try {
     const root = tree.getHexRoot();
     
@@ -209,15 +209,3 @@ function validateMerkleTree(tree, leaves) {
     return false;
   }
 }
-
-module.exports = {
-  createAnswerLeaf,
-  buildMerkleTreeFromBatch,
-  generateMerkleProof,
-  verifyMerkleProof,
-  generateProofForQuizAnswer,
-  commitBatchToBlockchain,
-  saveBatchOffchain,
-  finalizeBatch,
-  validateMerkleTree
-};
