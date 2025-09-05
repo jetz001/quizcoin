@@ -260,9 +260,15 @@ async function deployDiamond() {
     PoolManager: PoolManagerAddress,
     ...facetAddresses
   };
-  const addressesPath = path.join(__dirname, '..', '..', 'frontend', 'src', 'config', 'addresses.json');
-  fs.writeFileSync(addressesPath, JSON.stringify(addresses, null, 2));
-  console.log(`ที่อยู่สัญญาถูกบันทึกไว้ที่ ${addressesPath}`);
+  // Save to frontend
+  const frontendAddressesPath = path.join(__dirname, '..', '..', 'frontend', 'src', 'config', 'addresses.json');
+  fs.writeFileSync(frontendAddressesPath, JSON.stringify(addresses, null, 2));
+  console.log(`✅ Frontend addresses updated: ${frontendAddressesPath}`);
+
+  // Save to backend 
+  const backendAddressesPath = path.join(__dirname, '..', 'contractAddresses.json');
+  fs.writeFileSync(backendAddressesPath, JSON.stringify(addresses, null, 2));
+  console.log(`✅ Backend addresses updated: ${backendAddressesPath}`);
 
   // ---- อัพเดท .env ----
   const envPath = path.join(__dirname, '..', '.env');
