@@ -1,4 +1,4 @@
-// backend/services/firebase.js - Fixed for ES modules
+// backend/services/firebase.js - แก้ไข query issues
 import admin from 'firebase-admin';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -71,7 +71,7 @@ export async function storeQuestionToFirestore(quizId, quizData, batchId) {
   }
 }
 
-// Store Merkle leaf data
+// Store Merkle leaf data with better structure
 export async function storeMerkleLeaf(batchId, leaf, quizId, correctAnswer) {
   if (!db) {
     console.warn("⚠️ Firebase not initialized");
@@ -79,15 +79,18 @@ export async function storeMerkleLeaf(batchId, leaf, quizId, correctAnswer) {
   }
 
   try {
-    await db.collection('merkle_leaves').add({
-      batchId,
+    const docData = {
+      batchId: parseInt(batchId), // แปลงเป็น number เพื่อให้ query ง่าย
       leaf,
       quizId,
       correctAnswer,
       answerHash: leaf,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       status: 'active'
-    });
+    };
+
+    await db.collection('merkle_leaves').add(docData);
+    console.log(`🌿 Stored leaf for ${quizId} (batch: ${batchId})`);
     return true;
   } catch (error) {
     console.error(`❌ Failed to store leaf for ${quizId}:`, error);
@@ -101,12 +104,13 @@ export async function createBatchDocument(batchId, totalQuestions) {
 
   try {
     await db.collection('merkle_batches').doc(String(batchId)).set({
-      batchId,
+      batchId: parseInt(batchId),
       totalQuestions,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       status: 'generating',
       progress: 0
     });
+    console.log(`📁 Created batch document: ${batchId}`);
     return true;
   } catch (error) {
     console.error("❌ Failed to create batch document:", error);
@@ -143,6 +147,7 @@ export async function completeBatch(batchId, created, merkleRoot, allLeaves, all
       quizIds: allQuizIds,
       readyAt: admin.firestore.FieldValue.serverTimestamp() 
     });
+    console.log(`✅ Completed batch: ${batchId}`);
     return true;
   } catch (error) {
     console.error("❌ Failed to complete batch:", error);
@@ -163,24 +168,52 @@ export async function getBatch(batchId) {
   }
 }
 
-// Get leaves for batch
+// Get leaves for batch - แก้ไข query issue
 export async function getLeavesForBatch(batchId) {
   if (!db) return [];
 
   try {
+    console.log(`🔍 Getting leaves for batch ${batchId}...`);
+    
+    // ลองใช้ query ง่ายๆ ก่อน (ไม่ orderBy)
     const query = await db.collection('merkle_leaves')
-      .where('batchId', '==', batchId)
-      .orderBy('createdAt')
+      .where('batchId', '==', parseInt(batchId))
       .get();
     
-    return query.docs.map(doc => doc.data());
+    if (query.empty) {
+      console.warn(`⚠️ No leaves found for batch ${batchId}`);
+      return [];
+    }
+
+    const leaves = query.docs.map(doc => {
+      const data = doc.data();
+      console.log(`   📄 Found leaf: ${data.quizId}`);
+      return data;
+    });
+    
+    console.log(`✅ Found ${leaves.length} leaves for batch ${batchId}`);
+    return leaves;
   } catch (error) {
     console.error("❌ Failed to get leaves:", error);
-    return [];
+    
+    // ถ้า query แบบปกติไม่ได้ ลอง query ทุก document แล้วกรองเอง
+    try {
+      console.log(`🔄 Trying fallback query for batch ${batchId}...`);
+      const allDocs = await db.collection('merkle_leaves').get();
+      const filteredLeaves = allDocs.docs
+        .map(doc => doc.data())
+        .filter(data => data.batchId === parseInt(batchId));
+      
+      console.log(`✅ Fallback found ${filteredLeaves.length} leaves for batch ${batchId}`);
+      return filteredLeaves;
+    } catch (fallbackError) {
+      console.error("❌ Fallback query also failed:", fallbackError);
+      return [];
+    }
   }
 }
 
-// Find quiz leaf
+// Find quiz leaf - แก้ไข query
 export async function findQuizLeaf(quizId) {
   if (!db) return null;
 
@@ -268,29 +301,32 @@ export async function getQuestion(quizId) {
   }
 }
 
-// Get quizzes with filters
+// Get quizzes with filters - ใช้ query ง่ายๆ
 export async function getQuizzes(limit = 20, category = null, difficulty = null) {
   if (!db) return [];
 
   try {
     let query = db.collection('questions')
       .where('status', '==', 'active')
-      .orderBy('createdAt', 'desc')
       .limit(limit);
 
+    // เพิ่ม filter ทีละตัวเพื่อหลีกเลี่ยง index issues
     if (category) {
       query = query.where('category', '==', category);
     }
 
+    const snapshot = await query.get();
+    let results = snapshot.docs.map(doc => doc.data());
+
+    // Filter difficulty ใน JavaScript แทน Firestore query
     if (difficulty) {
       const difficultyNum = parseInt(difficulty);
       if (difficultyNum >= 1 && difficultyNum <= 100) {
-        query = query.where('difficulty', '==', difficultyNum);
+        results = results.filter(quiz => quiz.difficulty === difficultyNum);
       }
     }
 
-    const snapshot = await query.get();
-    return snapshot.docs.map(doc => doc.data());
+    return results;
   } catch (error) {
     console.error("❌ Failed to get quizzes:", error);
     return [];

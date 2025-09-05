@@ -1,153 +1,217 @@
-// frontend/src/utils/blockchain.js - Enhanced version
+// frontend/src/utils/blockchain.js - Fix network configuration
 import { ethers } from 'ethers';
 
-// Contract addresses and ABIs
-import contractAddresses from '../config/addresses.json';
-import QuizDiamondABI from '../abi/QuizGameDiamond.json';
-import MerkleFacetABI from '../abi/MerkleFacet.json';
-import QuizCoinABI from '../abi/QuizCoin.json';
+// Network configurations - แก้ไข chain ID
+export const NETWORKS = {
+  BNB_TESTNET: {
+    chainId: '0x61', // 97 in hex = BSC Testnet ✅
+    chainName: 'BNB Smart Chain Testnet',
+    nativeCurrency: {
+      name: 'BNB',
+      symbol: 'BNB',
+      decimals: 18,
+    },
+    rpcUrls: ['https://data-seed-prebsc-1-s1.binance.org:8545/'],
+    blockExplorerUrls: ['https://testnet.bscscan.com/'],
+  }
+};
 
-class BlockchainService {
+// Contract addresses - ใช้จาก .env
+export const contractAddresses = {
+  "97": { // BSC Testnet chain ID ในรูปแบบ decimal
+    QuizGameDiamond: "0x7707CE42a3EFE0E5bdAE20996e2D0a1d45e40FE4", // จาก .env
+    QuizCoin: "0x7707CE42a3EFE0E5bdAE20996e2D0a1d45e40FE4", // หรือ address แยกถ้ามี
+    MerkleFacet: "0x7707CE42a3EFE0E5bdAE20996e2D0a1d45e40FE4"
+  }
+};
+
+// Contract ABIs
+const QUIZ_DIAMOND_ABI = [
+  // Merkle functions
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "leaf", "type": "bytes32" },
+      { "internalType": "bytes32[]", "name": "proof", "type": "bytes32[]" }
+    ],
+    "name": "verifyQuiz",
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "_questionId", "type": "uint256" },
+      { "internalType": "bytes32", "name": "_answerLeaf", "type": "bytes32" },
+      { "internalType": "bytes32[]", "name": "_merkleProof", "type": "bytes32[]" }
+    ],
+    "name": "submitAnswer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  // Question info
+  {
+    "inputs": [{ "internalType": "uint256", "name": "_questionId", "type": "uint256" }],
+    "name": "getQuestion",
+    "outputs": [
+      { "internalType": "bytes32", "name": "correctAnswerHash", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "hintHash", "type": "bytes32" },
+      { "internalType": "address", "name": "questionCreator", "type": "address" },
+      { "internalType": "uint256", "name": "difficultyLevel", "type": "uint256" },
+      { "internalType": "uint256", "name": "baseRewardAmount", "type": "uint256" },
+      { "internalType": "bool", "name": "isClosed", "type": "bool" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+];
+
+const QUIZ_COIN_ABI = [
+  {
+    "inputs": [{ "internalType": "address", "name": "account", "type": "address" }],
+    "name": "balanceOf",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "decimals",
+    "outputs": [{ "internalType": "uint8", "name": "", "type": "uint8" }],
+    "stateMutability": "view",
+    "type": "function"
+  }
+];
+
+// Utility class for blockchain operations
+export class BlockchainService {
   constructor() {
     this.provider = null;
     this.signer = null;
     this.quizDiamondContract = null;
-    this.merkleContract = null;
     this.quizCoinContract = null;
-    this.isConnected = false;
-    this.userAddress = null;
   }
 
-  // Initialize blockchain connection
+  // Initialize the service
   async initialize() {
     try {
-      if (typeof window.ethereum === 'undefined') {
-        throw new Error('Please install MetaMask to use this application');
+      if (!window.ethereum) {
+        throw new Error('MetaMask not detected');
       }
 
       this.provider = new ethers.BrowserProvider(window.ethereum);
-      
-      // Request account access
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts'
-      });
-
-      if (accounts.length === 0) {
-        throw new Error('No accounts found. Please connect your wallet.');
-      }
-
       this.signer = await this.provider.getSigner();
-      this.userAddress = await this.signer.getAddress();
 
-      // Initialize contracts
+      // Get network info
+      const network = await this.provider.getNetwork();
+      const chainId = network.chainId.toString();
+      
+      console.log(`🌐 Connected to network: Chain ID ${chainId}`);
+
+      // Initialize contracts based on chain ID
       await this.initializeContracts();
 
-      this.isConnected = true;
-      console.log('✅ Blockchain service initialized:', this.userAddress);
-
-      // Listen for account changes
-      window.ethereum.on('accountsChanged', (accounts) => {
-        if (accounts.length === 0) {
-          this.disconnect();
-        } else {
-          window.location.reload(); // Reload to reinitialize
-        }
-      });
-
-      // Listen for network changes
-      window.ethereum.on('chainChanged', () => {
-        window.location.reload(); // Reload to reinitialize
-      });
-
+      console.log('✅ Blockchain service initialized');
       return true;
     } catch (error) {
-      console.error('❌ Blockchain initialization failed:', error);
-      throw error;
+      console.error('❌ Failed to initialize blockchain service:', error);
+      return false;
     }
   }
 
-  // Initialize smart contracts
+  // Initialize contracts for current network
   async initializeContracts() {
     try {
       const network = await this.provider.getNetwork();
       const chainId = network.chainId.toString();
 
-      if (!contractAddresses[chainId]) {
-        throw new Error(`Unsupported network. Chain ID: ${chainId}`);
-      }
+      console.log(`🔧 Initializing contracts for chain ID: ${chainId}`);
 
-      const addresses = contractAddresses[chainId];
+      // ใช้ contractAddresses โดยตรง
+      if (!contractAddresses.QuizGameDiamond) {
+        console.error('❌ Available contracts:', contractAddresses);
+        throw new Error(`No QuizGameDiamond address found. Available: ${Object.keys(contractAddresses).join(', ')}`);
+      }
 
       // Initialize Quiz Diamond contract (main contract)
-      if (addresses.QuizGameDiamond) {
-        this.quizDiamondContract = new ethers.Contract(
-          addresses.QuizGameDiamond,
-          QuizDiamondABI.abi,
-          this.signer
-        );
-      }
-
-      // Initialize Merkle contract (same as Diamond for Merkle functions)
-      if (addresses.QuizGameDiamond) {
-        this.merkleContract = new ethers.Contract(
-          addresses.QuizGameDiamond,
-          MerkleFacetABI.abi,
-          this.signer
-        );
-      }
+      this.quizDiamondContract = new ethers.Contract(
+        contractAddresses.QuizGameDiamond,
+        QUIZ_DIAMOND_ABI,
+        this.signer
+      );
+      console.log(`✅ Quiz Diamond contract: ${contractAddresses.QuizGameDiamond}`);
 
       // Initialize QuizCoin contract
-      if (addresses.QuizCoin) {
+      if (contractAddresses.QuizCoin) {
         this.quizCoinContract = new ethers.Contract(
-          addresses.QuizCoin,
-          QuizCoinABI.abi,
+          contractAddresses.QuizCoin,
+          QUIZ_COIN_ABI,
           this.signer
         );
+        console.log(`✅ Quiz Coin contract: ${contractAddresses.QuizCoin}`);
       }
 
-      console.log('✅ Contracts initialized for chain:', chainId);
+      console.log('✅ Contracts initialized successfully');
     } catch (error) {
       console.error('❌ Contract initialization failed:', error);
       throw error;
     }
   }
 
-  // Disconnect wallet
-  disconnect() {
-    this.provider = null;
-    this.signer = null;
-    this.quizDiamondContract = null;
-    this.merkleContract = null;
-    this.quizCoinContract = null;
-    this.isConnected = false;
-    this.userAddress = null;
-    console.log('🔌 Blockchain service disconnected');
-  }
-
-  // Get user's wallet address
-  getAddress() {
-    return this.userAddress;
-  }
-
-  // Check if wallet is connected
-  isWalletConnected() {
-    return this.isConnected && this.userAddress;
-  }
-
-  // Get QuizCoin balance
-  async getQZCBalance() {
+  // Check if connected to correct network
+  async checkNetwork() {
     try {
-      if (!this.quizCoinContract || !this.userAddress) {
+      const network = await this.provider.getNetwork();
+      const chainId = network.chainId.toString();
+      
+      // รองรับ BSC Testnet (Chain ID: 97)
+      return chainId === '97';
+    } catch (error) {
+      console.error('Error checking network:', error);
+      return false;
+    }
+  }
+
+  // Switch to BNB Testnet
+  async switchToBNBTestnet() {
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: NETWORKS.BNB_TESTNET.chainId }], // 0x61
+      });
+      return true;
+    } catch (error) {
+      if (error.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [NETWORKS.BNB_TESTNET],
+          });
+          return true;
+        } catch (addError) {
+          console.error('Failed to add BNB Testnet:', addError);
+          return false;
+        }
+      }
+      console.error('Failed to switch network:', error);
+      return false;
+    }
+  }
+
+  // Get user's QZC balance
+  async getQZCBalance(address) {
+    try {
+      if (!this.quizCoinContract) {
         return "0.00";
       }
 
-      const balance = await this.quizCoinContract.balanceOf(this.userAddress);
+      const balance = await this.quizCoinContract.balanceOf(address);
       const decimals = await this.quizCoinContract.decimals();
       
       const formattedBalance = ethers.formatUnits(balance, decimals);
       return parseFloat(formattedBalance).toFixed(2);
     } catch (error) {
-      console.error('❌ Error getting QZC balance:', error);
+      console.error('Error getting QZC balance:', error);
       return "0.00";
     }
   }
@@ -189,22 +253,6 @@ class BlockchainService {
     }
   }
 
-  // Verify Merkle proof on-chain
-  async verifyMerkleProof(leaf, proof) {
-    try {
-      if (!this.merkleContract) {
-        throw new Error('Merkle contract not initialized');
-      }
-
-      console.log('⚡ Verifying Merkle proof on-chain...');
-      const isValid = await this.merkleContract.verifyQuiz(leaf, proof);
-      return isValid;
-    } catch (error) {
-      console.error('❌ Error verifying Merkle proof on-chain:', error);
-      return false;
-    }
-  }
-
   // Submit answer with Merkle proof
   async submitAnswer(quizId, answer, onProgress) {
     try {
@@ -224,18 +272,10 @@ class BlockchainService {
         throw new Error('Invalid Merkle proof generated');
       }
 
-      // Step 2: Verify proof on-chain (optional check)
-      onProgress && onProgress('⚡ กำลังตรวจสอบด้วย Merkle Tree...');
-      const isValidOnChain = await this.verifyMerkleProof(proofData.leaf, proofData.proof);
-      
-      if (!isValidOnChain) {
-        console.warn('⚠️ On-chain verification failed, but proceeding...');
-      }
-
-      // Step 3: Extract question ID from quizId
+      // Step 2: Extract question ID from quizId
       const questionId = this.extractQuestionId(quizId);
 
-      // Step 4: Submit answer to blockchain
+      // Step 3: Submit answer to blockchain
       onProgress && onProgress('📝 กำลังส่งคำตอบขึ้น blockchain...');
       
       const tx = await this.quizDiamondContract.submitAnswer(
@@ -253,10 +293,6 @@ class BlockchainService {
       const receipt = await tx.wait();
       console.log('✅ Transaction confirmed:', tx.hash);
 
-      // Step 5: Record answer in backend
-      onProgress && onProgress('💾 กำลังบันทึกข้อมูล...');
-      await this.recordAnswerSubmission(quizId, answer, proofData, tx.hash);
-
       onProgress && onProgress('🎉 สำเร็จ! กำลังประมวลผลรางวัล...');
 
       return {
@@ -272,7 +308,7 @@ class BlockchainService {
     }
   }
 
-  // Extract question ID from quiz ID (implement based on your ID format)
+  // Extract question ID from quiz ID
   extractQuestionId(quizId) {
     // If quizId format is like "q_1234567890_1", extract the last number
     const parts = quizId.split('_');
@@ -295,120 +331,78 @@ class BlockchainService {
     return hash;
   }
 
-  // Record answer submission in backend
-  async recordAnswerSubmission(quizId, answer, proofData, txHash) {
-    try {
-      const response = await fetch('/api/submit-answer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quizId,
-          answer,
-          userAccount: this.userAddress,
-          merkleProof: proofData.proof,
-          txHash
-        })
-      });
-
-      if (!response.ok) {
-        console.warn('⚠️ Failed to record answer in backend');
-        return false;
-      }
-
-      const data = await response.json();
-      return data.success;
-    } catch (error) {
-      console.error('❌ Error recording answer submission:', error);
-      return false;
-    }
+  // Format address for display
+  formatAddress(address) {
+    if (!address) return '';
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
   }
 
-  // Get user's answered quizzes
-  async getUserAnsweredQuizzes() {
-    try {
-      if (!this.userAddress) {
-        throw new Error('No wallet connected');
-      }
-
-      const response = await fetch('/api/get-answered-quizzes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userAccount: this.userAddress })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to fetch answered quizzes');
-      }
-
-      return data.answeredQuizzes || [];
-    } catch (error) {
-      console.error('❌ Error getting answered quizzes:', error);
-      return [];
-    }
+  // Format transaction hash for display
+  formatTxHash(hash) {
+    if (!hash) return '';
+    return `${hash.slice(0, 10)}...${hash.slice(-8)}`;
   }
 
-  // Get network information
-  async getNetworkInfo() {
-    try {
-      if (!this.provider) {
-        return null;
-      }
-
-      const network = await this.provider.getNetwork();
-      return {
-        chainId: network.chainId.toString(),
-        name: network.name,
-        ensAddress: network.ensAddress
-      };
-    } catch (error) {
-      console.error('❌ Error getting network info:', error);
-      return null;
-    }
-  }
-
-  // Check if user can submit answer (not already answered today)
-  async canSubmitAnswer(quizId) {
-    try {
-      const answeredQuizzes = await this.getUserAnsweredQuizzes();
-      const today = new Date().toDateString();
-      
-      // Check if already answered this quiz today
-      const alreadyAnswered = answeredQuizzes.some(quiz => 
-        quiz.quizId === quizId && 
-        new Date(quiz.answeredAt).toDateString() === today
-      );
-
-      return !alreadyAnswered;
-    } catch (error) {
-      console.error('❌ Error checking answer eligibility:', error);
-      return true; // Allow attempt if check fails
-    }
-  }
-
-  // Format error messages for user display
-  formatError(error) {
-    if (error.code === 4001) {
-      return 'การทำธุรกรรมถูกยกเลิกโดยผู้ใช้';
-    } else if (error.code === -32603) {
-      return 'เกิดข้อผิดพลาดภายในของ RPC';
-    } else if (error.message.includes('insufficient funds')) {
-      return 'เงินในกระเป๋าไม่เพียงพอสำหรับค่าแก๊ส';
-    } else if (error.message.includes('Wrong answer')) {
-      return 'คำตอบไม่ถูกต้อง';
-    } else if (error.message.includes('already answered')) {
-      return 'คุณได้ตอบคำถามนี้ไปแล้ววันนี้';
-    }
-    
-    return error.message || 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ';
+  // Disconnect and cleanup
+  disconnect() {
+    this.provider = null;
+    this.signer = null;
+    this.quizDiamondContract = null;
+    this.quizCoinContract = null;
+    console.log('🔌 Blockchain service disconnected');
   }
 }
 
-// Create and export singleton instance
-const blockchainService = new BlockchainService();
+// Export utility functions
+export const blockchainService = new BlockchainService();
+
+// Helper function to format numbers
+export const formatNumber = (num, decimals = 2) => {
+  return parseFloat(num).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
+};
+
+// Helper function to format currency
+export const formatCurrency = (amount, currency = 'QZC') => {
+  return `${formatNumber(amount)} ${currency}`;
+};
+
+// Helper function to calculate time ago
+export const timeAgo = (timestamp) => {
+  const now = Date.now();
+  const diff = now - timestamp;
+  
+  const minutes = Math.floor(diff / (1000 * 60));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  
+  if (minutes < 60) {
+    return `${minutes} นาทีที่แล้ว`;
+  } else if (hours < 24) {
+    return `${hours} ชั่วโมงที่แล้ว`;
+  } else {
+    return `${days} วันที่แล้ว`;
+  }
+};
+
+// Error handler for blockchain operations
+export const handleBlockchainError = (error, context = '') => {
+  console.error(`Blockchain error ${context}:`, error);
+  
+  if (error.code === 4001) {
+    return 'ผู้ใช้ปฏิเสธการทำธุรกรรม';
+  } else if (error.message.includes('insufficient funds')) {
+    return 'BNB ไม่เพียงพอสำหรับค่า gas';
+  } else if (error.message.includes('network')) {
+    return 'เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย';
+  } else if (error.reason) {
+    return `Smart Contract Error: ${error.reason}`;
+  } else {
+    return `เกิดข้อผิดพลาด: ${error.message}`;
+  }
+};
+
+// Export singleton instance as default
 export default blockchainService;

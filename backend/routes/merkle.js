@@ -1,8 +1,9 @@
-// backend/routes/merkle.js
-const express = require('express');
+// backend/routes/merkle.js - Merkle Routes Only
+import express from 'express';
+import { generateProofForQuizAnswer, verifyMerkleProof } from '../services/merkle.js';
+import { findQuizLeaf, getBatch } from '../services/firebase.js';
+
 const router = express.Router();
-const { generateProofForQuizAnswer, verifyMerkleProof } = require('../services/merkle');
-const { findQuizLeaf, getBatch } = require('../services/firebase');
 
 // Generate Merkle proof for answer verification
 router.post('/generate-merkle-proof', async (req, res) => {
@@ -189,4 +190,4 @@ router.get('/batch/:batchId/tree-status', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;

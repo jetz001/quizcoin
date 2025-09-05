@@ -1,154 +1,82 @@
-// frontend/src/hooks/useBlockchain.js - เพิ่ม validation และ debug
+// frontend/src/hooks/useBlockchain.js - Fixed import (remove handleBlockchainError)
+import { useState, useEffect, useCallback } from 'react';
+import blockchainService from '../utils/blockchain';
 
-import { useState, useCallback, useEffect } from 'react';
-import { blockchainService, handleBlockchainError } from '../utils/blockchain';
+// Helper function for blockchain error handling (inline)
+const handleBlockchainError = (error, context = '') => {
+  console.error(`Blockchain error ${context}:`, error);
+  
+  if (error.code === 4001) {
+    return 'ผู้ใช้ปฏิเสธการทำธุรกรรม';
+  } else if (error.message.includes('insufficient funds')) {
+    return 'BNB ไม่เพียงพอสำหรับค่า gas';
+  } else if (error.message.includes('network')) {
+    return 'เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย';
+  } else if (error.reason) {
+    return `Smart Contract Error: ${error.reason}`;
+  } else {
+    return `เกิดข้อผิดพลาด: ${error.message}`;
+  }
+};
 
-const useBlockchain = () => {
-  const [userAccount, setUserAccount] = useState(null);
+export const useBlockchain = () => {
   const [isConnected, setIsConnected] = useState(false);
+  const [userAccount, setUserAccount] = useState(null);
   const [isCorrectNetwork, setIsCorrectNetwork] = useState(false);
   const [qzcBalance, setQzcBalance] = useState("0.00");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Debug: ตรวจสอบคำถามที่มีอยู่
-  const debugAvailableQuestions = useCallback(async () => {
-    try {
-      console.log('🔍 Debugging available questions...');
-      
-      // 1. เช็คใน database
-      const dbResponse = await fetch('/api/debug/questions');
-      const dbData = await dbResponse.json();
-      
-      console.log('📚 Database questions:', dbData);
-      
-      // 2. เช็คใน smart contract
-      if (blockchainService.quizDiamondContract) {
-        const availableQuestions = await blockchainService.findAvailableQuestions();
-        console.log('⛓️ Smart contract questions:', availableQuestions);
-        
-        return {
-          database: dbData,
-          smartContract: availableQuestions
-        };
-      }
-      
-      return { database: dbData, smartContract: [] };
-    } catch (error) {
-      console.error('Debug error:', error);
-      return null;
-    }
-  }, []);
-
-  // Update QZC balance
-  const updateBalance = useCallback(async (account) => {
-    try {
-      if (!account || !blockchainService.quizCoinContract) return;
-      
-      const balance = await blockchainService.getQZCBalance(account);
-      setQzcBalance(balance);
-      console.log('💰 Updated QZC balance:', balance);
-    } catch (error) {
-      console.error('Failed to update balance:', error);
-      // Don't set error state for balance updates to avoid blocking UI
-    }
-  }, []);
-
-  // Submit answer with enhanced validation
-  const submitAnswer = useCallback(async (quizId, answer, onProgress) => {
+  // Initialize blockchain connection
+  const initialize = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      if (!userAccount) {
-        throw new Error('Wallet not connected');
-      }
+      const success = await blockchainService.initialize();
+      if (success) {
+        const networkOk = await blockchainService.checkNetwork();
+        setIsCorrectNetwork(networkOk);
+        setIsConnected(true);
 
-      if (!isCorrectNetwork) {
-        throw new Error('Please switch to BNB Smart Chain Testnet');
-      }
-
-      // 🔍 Debug: ตรวจสอบ quiz data ก่อนส่ง
-      console.log('🎯 Submitting answer:', { quizId, answer });
-      
-      // ตรวจสอบว่า quiz มี questionId หรือไม่
-      if (quizId && typeof quizId === 'object' && quizId.questionId) {
-        console.log('✅ Quiz has questionId:', quizId.questionId);
-      } else {
-        console.warn('⚠️ Quiz missing questionId, will generate one');
-      }
-
-      // Enhanced progress tracking
-      const enhancedOnProgress = (message) => {
-        console.log('📊 Progress:', message);
-        if (onProgress) onProgress(message);
-      };
-
-      // Submit answer via blockchain service
-      const result = await blockchainService.submitAnswer(
-        quizId, 
-        answer, 
-        enhancedOnProgress
-      );
-
-      // Record answer in backend if blockchain transaction successful
-      if (result.success) {
-        try {
-          await blockchainService.recordAnswer({
-            userAccount,
-            quizId: typeof quizId === 'object' ? quizId.quizId : quizId,
-            questionId: result.questionId,
-            answer,
-            correct: true,
-            mode: 'solo',
-            rewardAmount: result.rewardInfo.totalReward,
-            txHash: result.txHash
-          });
-          console.log('✅ Answer recorded in backend');
-        } catch (recordError) {
-          console.warn('⚠️ Failed to record answer in backend:', recordError);
-          // Don't throw here as blockchain transaction was successful
-        }
-
-        // Update balance after successful transaction
-        await updateBalance(userAccount);
+        // Get connected accounts
+        const accounts = await window.ethereum.request({ 
+          method: 'eth_accounts' 
+        });
         
-        console.log('🎉 Transaction completed successfully!', result);
+        if (accounts.length > 0) {
+          setUserAccount(accounts[0]);
+          await updateBalance(accounts[0]);
+        }
       }
-
-      return result;
     } catch (error) {
-      console.error('❌ Failed to submit answer:', error);
-      
-      // Enhanced error handling
-      let errorMessage = handleBlockchainError(error, 'during answer submission');
-      
-      // Add specific guidance for common errors
-      if (error.message.includes('Question does not exist')) {
-        errorMessage += '\n\n💡 Tips:\n- ตรวจสอบว่ามีคำถามใน Smart Contract\n- ลองรีเฟรชหน้าและเลือกคำถามใหม่\n- ติดต่อผู้พัฒนาถ้าปัญหายังคงมีอยู่';
-      }
-      
-      setError(errorMessage);
-      throw new Error(errorMessage);
+      console.error('Failed to initialize blockchain:', error);
+      setError(handleBlockchainError(error, 'during initialization'));
     } finally {
       setIsLoading(false);
     }
-  }, [userAccount, isCorrectNetwork, updateBalance]);
+  }, []);
 
-  // Enhanced connect wallet with debug
+  // Connect wallet
   const connectWallet = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      const accounts = await blockchainService.connectWallet();
-      
-      if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts found');
+      if (!window.ethereum) {
+        throw new Error('MetaMask not installed');
+      }
+
+      // Request account access
+      const accounts = await window.ethereum.request({
+        method: 'eth_requestAccounts'
+      });
+
+      if (accounts.length === 0) {
+        throw new Error('No accounts available');
       }
 
       setUserAccount(accounts[0]);
-      console.log('👛 Wallet connected:', accounts[0]);
 
       // Initialize blockchain service
       await blockchainService.initialize();
@@ -169,12 +97,6 @@ const useBlockchain = () => {
       setIsConnected(true);
       await updateBalance(accounts[0]);
 
-      // 🔍 Debug: ตรวจสอบคำถามที่มีอยู่หลังจากเชื่อมต่อ
-      setTimeout(async () => {
-        const debugInfo = await debugAvailableQuestions();
-        console.log('🔍 Debug info after wallet connection:', debugInfo);
-      }, 2000);
-
       return accounts[0];
     } catch (error) {
       console.error('Failed to connect wallet:', error);
@@ -183,7 +105,7 @@ const useBlockchain = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [debugAvailableQuestions, updateBalance]);
+  }, []);
 
   // Disconnect wallet
   const disconnectWallet = useCallback(() => {
@@ -193,8 +115,73 @@ const useBlockchain = () => {
     setQzcBalance("0.00");
     setError(null);
     blockchainService.disconnect();
-    console.log('👛 Wallet disconnected');
   }, []);
+
+  // Update QZC balance
+  const updateBalance = useCallback(async (account) => {
+    try {
+      if (!account || !blockchainService.quizCoinContract) return;
+      
+      const balance = await blockchainService.getQZCBalance(account);
+      setQzcBalance(balance);
+    } catch (error) {
+      console.error('Failed to update balance:', error);
+      // Don't set error state for balance updates to avoid blocking UI
+    }
+  }, []);
+
+  // Submit answer with full flow
+  const submitAnswer = useCallback(async (quizId, answer, onProgress) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      if (!userAccount) {
+        throw new Error('Wallet not connected');
+      }
+
+      if (!isCorrectNetwork) {
+        throw new Error('Please switch to BNB Smart Chain Testnet');
+      }
+
+      // Submit answer via blockchain service
+      const result = await blockchainService.submitAnswer(
+        quizId, 
+        answer, 
+        onProgress
+      );
+
+      // Record answer in backend if blockchain transaction successful
+      if (result.success) {
+        try {
+          await blockchainService.recordAnswer({
+            userAccount,
+            quizId,
+            answer,
+            correct: true,
+            mode: 'solo', // This should come from props
+            rewardAmount: result.rewardInfo.totalReward,
+            txHash: result.txHash
+          });
+        } catch (recordError) {
+          console.warn('Failed to record answer in backend:', recordError);
+          // Don't throw here as blockchain transaction was successful
+        }
+
+        // Update balance after successful transaction
+        await updateBalance(userAccount);
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Failed to submit answer:', error);
+      const errorMessage = handleBlockchainError(error, 'during answer submission');
+      setError(errorMessage);
+      throw new Error(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userAccount, isCorrectNetwork, updateBalance]);
 
   // Get user statistics
   const getUserStats = useCallback(async () => {
@@ -208,34 +195,12 @@ const useBlockchain = () => {
     }
   }, [userAccount]);
 
-  // Get available quizzes with enhanced validation
+  // Get available quizzes
   const getAvailableQuizzes = useCallback(async () => {
     try {
       if (!userAccount) return [];
       
-      console.log('📚 Fetching available quizzes...');
-      const quizzes = await blockchainService.getAvailableQuizzes(userAccount);
-      
-      // Validate and enhance quiz data
-      const enhancedQuizzes = quizzes.map(quiz => {
-        // Ensure quiz has required fields
-        const enhanced = {
-          ...quiz,
-          questionId: quiz.questionId || blockchainService.extractQuestionId(quiz.quizId || quiz.id),
-          id: quiz.quizId || quiz.id
-        };
-        
-        console.log('📋 Enhanced quiz:', {
-          dbId: enhanced.id,
-          questionId: enhanced.questionId,
-          difficultyLevel: enhanced.difficultyLevel
-        });
-        
-        return enhanced;
-      });
-      
-      console.log(`✅ Fetched ${enhancedQuizzes.length} available quizzes`);
-      return enhancedQuizzes;
+      return await blockchainService.getAvailableQuizzes(userAccount);
     } catch (error) {
       console.error('Failed to get available quizzes:', error);
       return [];
@@ -248,38 +213,17 @@ const useBlockchain = () => {
       setIsLoading(true);
       const success = await blockchainService.switchToBNBTestnet();
       setIsCorrectNetwork(success);
-      
-      if (success) {
-        console.log('🌐 Switched to BNB Smart Chain Testnet');
-      }
-      
       return success;
     } catch (error) {
       console.error('Failed to switch network:', error);
-      setError(handleBlockchainError(error, 'during network switch'));
+      setError(handleError(error, 'during network switch'));
       return false;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // Auto-connect on page load
-  useEffect(() => {
-    const autoConnect = async () => {
-      try {
-        if (window.ethereum && window.ethereum.selectedAddress) {
-          console.log('🔄 Auto-connecting wallet...');
-          await connectWallet();
-        }
-      } catch (error) {
-        console.log('Auto-connect failed:', error);
-      }
-    };
-
-    autoConnect();
-  }, [connectWallet]);
-
-  // Listen for account changes
+  // Setup event listeners
   useEffect(() => {
     if (window.ethereum) {
       const handleAccountsChanged = (accounts) => {
@@ -288,13 +232,17 @@ const useBlockchain = () => {
         } else if (accounts[0] !== userAccount) {
           setUserAccount(accounts[0]);
           updateBalance(accounts[0]);
-          console.log('👛 Account changed to:', accounts[0]);
         }
       };
 
       const handleChainChanged = (chainId) => {
-        console.log('🌐 Chain changed to:', chainId);
-        setIsCorrectNetwork(chainId === '0x61'); // BNB Testnet
+        const isCorrectChain = chainId === '0x61'; // BSC Testnet
+        setIsCorrectNetwork(isCorrectChain);
+        if (!isCorrectChain) {
+          setError('Please switch to BNB Smart Chain Testnet');
+        } else {
+          setError(null);
+        }
       };
 
       window.ethereum.on('accountsChanged', handleAccountsChanged);
@@ -307,24 +255,29 @@ const useBlockchain = () => {
     }
   }, [userAccount, disconnectWallet, updateBalance]);
 
+  // Auto-initialize on mount
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
   return {
     // State
-    userAccount,
     isConnected,
+    userAccount,
     isCorrectNetwork,
     qzcBalance,
     isLoading,
     error,
     
     // Actions
+    initialize,
     connectWallet,
     disconnectWallet,
-    switchNetwork,
     submitAnswer,
+    switchNetwork,
     updateBalance,
     getUserStats,
     getAvailableQuizzes,
-    debugAvailableQuestions,
     
     // Utilities
     formatAddress: (addr) => blockchainService.formatAddress(addr),
@@ -333,8 +286,102 @@ const useBlockchain = () => {
   };
 };
 
-// ✅ CRITICAL: Export the hook as named export
-export { useBlockchain };
+// Hook for quiz-specific operations
+export const useQuiz = (userAccount) => {
+  const [answeredQuizzes, setAnsweredQuizzes] = useState([]);
+  const [userStats, setUserStats] = useState({
+    totalAnswered: 0,
+    totalCorrect: 0,
+    totalEarned: "0",
+    streak: 0,
+    accuracy: 0
+  });
+  const [isLoading, setIsLoading] = useState(false);
 
-// Also export as default for flexibility
+  // Load answered quizzes
+  const loadAnsweredQuizzes = useCallback(async () => {
+    if (!userAccount) return;
+
+    try {
+      setIsLoading(true);
+      
+      const response = await fetch('/api/get-answered-quizzes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAccount }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setAnsweredQuizzes(data.answeredQuizzes || []);
+      }
+    } catch (error) {
+      console.error('Failed to load answered quizzes:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userAccount]);
+
+  // Load user stats
+  const loadUserStats = useCallback(async () => {
+    if (!userAccount) return;
+
+    try {
+      const stats = await blockchainService.getUserStats(userAccount);
+      if (stats) {
+        setUserStats(stats);
+      }
+    } catch (error) {
+      console.error('Failed to load user stats:', error);
+    }
+  }, [userAccount]);
+
+  // Check if user can answer a quiz
+  const canAnswerQuiz = useCallback((quizId) => {
+    return !answeredQuizzes.some(quiz => quiz.quizId === quizId);
+  }, [answeredQuizzes]);
+
+  // Add answered quiz
+  const addAnsweredQuiz = useCallback((quizData) => {
+    setAnsweredQuizzes(prev => [...prev, quizData]);
+    
+    // Update stats
+    setUserStats(prev => ({
+      ...prev,
+      totalAnswered: prev.totalAnswered + 1,
+      totalCorrect: quizData.correct ? prev.totalCorrect + 1 : prev.totalCorrect,
+      totalEarned: (parseFloat(prev.totalEarned) + parseFloat(quizData.rewardAmount || "0")).toString(),
+      streak: quizData.correct ? prev.streak + 1 : 0,
+      accuracy: Math.round(((quizData.correct ? prev.totalCorrect + 1 : prev.totalCorrect) / (prev.totalAnswered + 1)) * 100)
+    }));
+  }, []);
+
+  // Initialize data on mount or account change
+  useEffect(() => {
+    if (userAccount) {
+      loadAnsweredQuizzes();
+      loadUserStats();
+    } else {
+      setAnsweredQuizzes([]);
+      setUserStats({
+        totalAnswered: 0,
+        totalCorrect: 0,
+        totalEarned: "0",
+        streak: 0,
+        accuracy: 0
+      });
+    }
+  }, [userAccount, loadAnsweredQuizzes, loadUserStats]);
+
+  return {
+    answeredQuizzes,
+    userStats,
+    isLoading,
+    canAnswerQuiz,
+    addAnsweredQuiz,
+    loadAnsweredQuizzes,
+    loadUserStats
+  };
+};
+
 export default useBlockchain;
