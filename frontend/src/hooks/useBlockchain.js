@@ -1,6 +1,6 @@
 // frontend/src/hooks/useBlockchain.js - Fixed import (remove handleBlockchainError)
 import { useState, useEffect, useCallback } from 'react';
-import blockchainService from '../utils/blockchain';
+import { blockchainService } from '../utils/blockchain';
 
 // Helper function for blockchain error handling (inline)
 const handleBlockchainError = (error, context = '') => {
@@ -216,7 +216,7 @@ export const useBlockchain = () => {
       return success;
     } catch (error) {
       console.error('Failed to switch network:', error);
-      setError(handleError(error, 'during network switch'));
+      setError(handleBlockchainError(error, 'during network switch'));
       return false;
     } finally {
       setIsLoading(false);
