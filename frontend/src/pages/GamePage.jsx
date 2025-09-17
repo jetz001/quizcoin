@@ -14,6 +14,13 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [rewardAmount, setRewardAmount] = useState("100");
+  
+  // เพิ่ม state สำหรับข้อมูลเอง เผื่อ useBackendAPI ไม่ทำงาน
+  const [localQuizzes, setLocalQuizzes] = useState([]);
+  const [localAnsweredQuizzes, setLocalAnsweredQuizzes] = useState([]);
+  const [localUserStats, setLocalUserStats] = useState({
+    totalAnswered: 0, totalCorrect: 0, totalEarned: "0", streak: 0, accuracy: 0
+  });
 
   // ใช้ blockchain hook
   const {
@@ -23,26 +30,105 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
     clearError
   } = useBlockchain(userAccount);
 
-  // ใช้ backend API hook
+  // ใช้ backend API hook หรือ fallback
+  let backendData;
+  try {
+    backendData = useBackendAPI ? useBackendAPI(userAccount) : null;
+  } catch (error) {
+    console.error('useBackendAPI error:', error);
+    backendData = null;
+  }
+
   const {
-    quizzes,
-    answeredQuizzes, 
-    userStats,
-    loadBackendData
-  } = useBackendAPI ? useBackendAPI(userAccount) : {
-    // fallback ถ้า hook ไม่ทำงาน
-    quizzes: [],
-    answeredQuizzes: [],
-    userStats: { totalAnswered: 0, totalCorrect: 0, totalEarned: "0", streak: 0, accuracy: 0 },
-    loadBackendData: async () => {}
+    quizzes: hookQuizzes = [],
+    answeredQuizzes: hookAnsweredQuizzes = [], 
+    userStats: hookUserStats = localUserStats,
+    loadBackendData = null
+  } = backendData || {};
+
+  // ใช้ข้อมูลจาก hook หรือ local state
+  const quizzes = hookQuizzes.length > 0 ? hookQuizzes : localQuizzes;
+  const answeredQuizzes = hookAnsweredQuizzes.length > 0 ? hookAnsweredQuizzes : localAnsweredQuizzes;
+  const userStats = hookUserStats.totalAnswered > 0 ? hookUserStats : localUserStats;
+
+  // Manual loading function
+  const loadDataManually = async () => {
+    if (!userAccount) return;
+
+    console.log('📥 Loading data manually for', userAccount);
+
+    try {
+      // โหลดคำถามที่มี
+      const availableResponse = await fetch('/api/get-available-quizzes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAccount }),
+      });
+      
+      if (availableResponse.ok) {
+        const availableData = await availableResponse.json();
+        if (availableData.success) {
+          console.log('✅ Loaded quizzes:', availableData.quizzes.length);
+          setLocalQuizzes(availableData.quizzes || []);
+        }
+      }
+
+      // โหลดคำถามที่ตอบแล้ว
+      const answeredResponse = await fetch('/api/get-answered-quizzes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAccount }),
+      });
+      
+      if (answeredResponse.ok) {
+        const answeredData = await answeredResponse.json();
+        if (answeredData.success) {
+          console.log('✅ Loaded answered quizzes:', answeredData.answeredQuizzes.length);
+          setLocalAnsweredQuizzes(answeredData.answeredQuizzes || []);
+        }
+      }
+
+      // โหลดสถิติผู้ใช้
+      const statsResponse = await fetch('/api/get-user-stats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userAccount }),
+      });
+      
+      if (statsResponse.ok) {
+        const statsData = await statsResponse.json();
+        if (statsData.success) {
+          console.log('✅ Loaded user stats:', statsData.stats);
+          setLocalUserStats(statsData.stats || localUserStats);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error loading data manually:', error);
+    }
   };
 
   // โหลดข้อมูลเมื่อเริ่มต้น
   useEffect(() => {
-    if (userAccount && loadBackendData) {
-      loadBackendData();
+    if (userAccount) {
+      if (loadBackendData) {
+        console.log('📥 Loading via useBackendAPI hook');
+        loadBackendData();
+      } else {
+        console.log('📥 Loading manually (hook not available)');
+        loadDataManually();
+      }
     }
-  }, [userAccount, loadBackendData]);
+  }, [userAccount]);
+
+  // รีโหลดข้อมูล manual หากไม่มีคำถาม
+  useEffect(() => {
+    if (userAccount && quizzes.length === 0 && !loading) {
+      console.log('📥 No quizzes found, retrying manual load...');
+      setTimeout(() => {
+        loadDataManually();
+      }, 1000);
+    }
+  }, [userAccount, quizzes.length, loading]);
 
   // แสดง error จาก blockchain
   useEffect(() => {
@@ -105,7 +191,11 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
           
           // รีโหลดข้อมูลจาก backend
           setTimeout(() => {
-            if (loadBackendData) loadBackendData();
+            if (loadBackendData) {
+              loadBackendData();
+            } else {
+              loadDataManually();
+            }
           }, 1000);
           
           // แสดง transaction hash
