@@ -1,45 +1,65 @@
-// frontend/src/pages/GamePage.jsx
-import React, { useState, useEffect, useCallback } from "react";
+// แทนที่ไฟล์ frontend/src/pages/GamePage.jsx ทั้งหมด
+
+import React, { useState, useEffect } from "react";
 import useBlockchain from '../hooks/useBlockchain';
 
-const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBack }) => {
+// เดาว่าใน useBackendAPI.js อาจจะ export แบบ named export 
+// หรือ default export ลองทั้งสองวิธี
+import { useBackendAPI } from '../hooks/useBackendAPI';
+// หรือถ้า export default ให้ใช้
+// import useBackendAPI from '../hooks/useBackendAPI';
+
+const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
   const [selectedQuiz, setSelectedQuiz] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [rewardAmount, setRewardAmount] = useState("100");
   
-  // Local state for data management
+  // เพิ่ม state สำหรับข้อมูลเอง เผื่อ useBackendAPI ไม่ทำงาน
   const [localQuizzes, setLocalQuizzes] = useState([]);
   const [localAnsweredQuizzes, setLocalAnsweredQuizzes] = useState([]);
   const [localUserStats, setLocalUserStats] = useState({
-    totalAnswered: 0, 
-    totalCorrect: 0, 
-    totalEarned: "0", 
-    streak: 0, 
-    accuracy: 0
+    totalAnswered: 0, totalCorrect: 0, totalEarned: "0", streak: 0, accuracy: 0
   });
 
-  // Anti-duplicate loading flag
-  const [isLoadingData, setIsLoadingData] = useState(false);
-
-  // Use blockchain hook
+  // ใช้ blockchain hook
   const {
     submitAnswer,
     isLoading: blockchainLoading,
     error: blockchainError,
     clearError
-  } = useBlockchain();
+  } = useBlockchain(userAccount);
 
-  // Debounced data loading function
-  const loadDataManually = useCallback(async () => {
-    if (!userAccount || isLoadingData) return;
+  // ใช้ backend API hook หรือ fallback
+  let backendData;
+  try {
+    backendData = useBackendAPI ? useBackendAPI(userAccount) : null;
+  } catch (error) {
+    console.error('useBackendAPI error:', error);
+    backendData = null;
+  }
 
-    setIsLoadingData(true);
+  const {
+    quizzes: hookQuizzes = [],
+    answeredQuizzes: hookAnsweredQuizzes = [], 
+    userStats: hookUserStats = localUserStats,
+    loadBackendData = null
+  } = backendData || {};
+
+  // ใช้ข้อมูลจาก hook หรือ local state
+  const quizzes = hookQuizzes.length > 0 ? hookQuizzes : localQuizzes;
+  const answeredQuizzes = hookAnsweredQuizzes.length > 0 ? hookAnsweredQuizzes : localAnsweredQuizzes;
+  const userStats = hookUserStats.totalAnswered > 0 ? hookUserStats : localUserStats;
+
+  // Manual loading function
+  const loadDataManually = async () => {
+    if (!userAccount) return;
+
     console.log('📥 Loading data manually for', userAccount);
 
     try {
-      // Load available quizzes - แก้ไข URL ให้ชี้ไปยัง backend
-      const availableResponse = await fetch('http://localhost:8000/api/get-available-quizzes', {
+      // โหลดคำถามที่มี
+      const availableResponse = await fetch('/api/get-available-quizzes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),
@@ -53,8 +73,8 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
         }
       }
 
-      // Load answered quizzes - แก้ไข URL ให้ชี้ไปยัง backend
-      const answeredResponse = await fetch('http://localhost:8000/api/get-answered-quizzes', {
+      // โหลดคำถามที่ตอบแล้ว
+      const answeredResponse = await fetch('/api/get-answered-quizzes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),
@@ -68,8 +88,8 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
         }
       }
 
-      // Load user stats - แก้ไข URL ให้ชี้ไปยัง backend
-      const statsResponse = await fetch('http://localhost:8000/api/get-user-stats', {
+      // โหลดสถิติผู้ใช้
+      const statsResponse = await fetch('/api/get-user-stats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),
@@ -84,40 +104,38 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
       }
     } catch (error) {
       console.error('❌ Error loading data manually:', error);
-    } finally {
-      setIsLoadingData(false);
     }
-  }, [userAccount]); // ลบ isLoadingData จาก dependency
+  };
 
-  // Load data when component mounts or user changes
+  // โหลดข้อมูลเมื่อเริ่มต้น
   useEffect(() => {
-    let isMounted = true;
-    
     if (userAccount) {
-      console.log('🔄 useEffect triggered for user:', userAccount);
-      
-      // Single load on mount, no timeout needed
-      if (isMounted) {
+      if (loadBackendData) {
+        console.log('📥 Loading via useBackendAPI hook');
+        loadBackendData();
+      } else {
+        console.log('📥 Loading manually (hook not available)');
         loadDataManually();
       }
     }
+  }, [userAccount]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [userAccount]); // ลบ loadDataManually จาก dependency
-
-  // Manual refresh button handler
-  const handleRefresh = useCallback(() => {
-    if (!isLoadingData) {
-      loadDataManually();
+  // รีโหลดข้อมูล manual หากไม่มีคำถาม
+  useEffect(() => {
+    if (userAccount && quizzes.length === 0 && !loading) {
+      console.log('📥 No quizzes found, retrying manual load...');
+      setTimeout(() => {
+        loadDataManually();
+      }, 1000);
     }
-  }, [loadDataManually]);
+  }, [userAccount, quizzes.length, loading]);
+
+  // แสดง error จาก blockchain
   useEffect(() => {
     if (blockchainError) {
       setMessage(`❌ ${blockchainError}`);
       const timer = setTimeout(() => {
-        if (clearError) clearError();
+        clearError();
         setMessage("");
       }, 5000);
       return () => clearTimeout(timer);
@@ -131,8 +149,8 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
     setMessage("🔄 กำลังตรวจสอบคำตอบ...");
 
     try {
-      // Find the correct answer from quiz data
-      const quizData = localQuizzes.find(q => q.quizId === selectedQuiz.quizId);
+      // ค้นหาคำตอบที่ถูกต้องจากข้อมูลควิซ
+      const quizData = quizzes.find(q => q.quizId === selectedQuiz.quizId);
       
       if (!quizData) {
         setMessage("❌ ไม่พบข้อมูลคำถาม");
@@ -140,11 +158,11 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
         return;
       }
 
-      // Check if answer is correct
+      // ตรวจสอบคำตอบที่ถูกต้อง
       const correctAnswer = quizData.options[quizData.answerIndex];
       
       if (correctAnswer === selectedOption) {
-        // Submit answer via blockchain service
+        // ส่งคำตอบผ่าน blockchain service
         console.log('🚀 Submitting answer via blockchain service:', {
           quizId: selectedQuiz.quizId,
           answer: selectedOption
@@ -154,52 +172,40 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
           selectedQuiz.quizId, 
           selectedOption,
           (progressMessage) => {
+            // อัปเดตสถานะตามความคืบหน้า
             setMessage(progressMessage);
           }
         );
 
         if (result && result.success) {
-          const rewardAmount = result.reward || '100';
+          const rewardAmount = result.rewardInfo?.totalReward || '100';
           setMessage(`🎉 คำตอบถูกต้อง! คุณได้รับ ${rewardAmount} QZC!`);
           
-          // Update balance
-          const currentBalance = parseFloat(qzcBalance || "0");
+          // อัปเดตยอดเงิน
+          const currentBalance = parseFloat(qzcBalance);
           const newBalance = currentBalance + parseFloat(rewardAmount);
           setQzcBalance(newBalance.toFixed(2));
           
-          // Update local stats
-          setLocalUserStats(prev => ({
-            totalAnswered: prev.totalAnswered + 1,
-            totalCorrect: prev.totalCorrect + 1,
-            totalEarned: (parseFloat(prev.totalEarned) + parseFloat(rewardAmount)).toString(),
-            streak: prev.streak + 1,
-            accuracy: Math.round(((prev.totalCorrect + 1) / (prev.totalAnswered + 1)) * 100)
-          }));
-
-          // Add to answered quizzes
-          const newAnsweredQuiz = {
-            quizId: selectedQuiz.quizId,
-            answeredAt: Date.now(),
-            mode: selectedMode,
-            correct: true,
-            selectedOption: selectedOption,
-            correctOption: correctAnswer,
-            rewardAmount: rewardAmount,
-            txHash: result.transactionHash
-          };
-          setLocalAnsweredQuizzes(prev => [...prev, newAnsweredQuiz]);
-          
-          // Reset selected quiz
+          // รีเซ็ตการเลือกควิซ
           setSelectedQuiz(null);
           
-          // Show transaction info if available
-          if (result.transactionHash) {
+          // รีโหลดข้อมูลจาก backend
+          setTimeout(() => {
+            if (loadBackendData) {
+              loadBackendData();
+            } else {
+              loadDataManually();
+            }
+          }, 1000);
+          
+          // แสดง transaction hash
+          if (result.txHash) {
             setTimeout(() => {
-              setMessage(`✅ Transaction: ${result.transactionHash.substring(0, 10)}...`);
+              setMessage(`✅ Transaction: ${result.txHash.substring(0, 10)}...`);
             }, 3000);
           }
           
-          // Clear message after delay
+          // ล้างข้อความหลังจาก 8 วินาที
           setTimeout(() => {
             setMessage("");
           }, 8000);
@@ -207,16 +213,7 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
       } else {
         setMessage(`❌ คำตอบผิด! คำตอบที่ถูกต้องคือ: ${correctAnswer}`);
         
-        // Update stats for wrong answer
-        setLocalUserStats(prev => ({
-          totalAnswered: prev.totalAnswered + 1,
-          totalCorrect: prev.totalCorrect,
-          totalEarned: prev.totalEarned,
-          streak: 0, // Reset streak on wrong answer
-          accuracy: Math.round((prev.totalCorrect / (prev.totalAnswered + 1)) * 100)
-        }));
-        
-        // Clear message after delay
+        // ล้างข้อความหลังจาก 3 วินาที
         setTimeout(() => {
           setMessage("");
         }, 3000);
@@ -225,7 +222,7 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
       console.error("Error submitting answer:", error);
       setMessage(`❌ เกิดข้อผิดพลาด: ${error.message}`);
       
-      // Clear message after delay
+      // ล้างข้อความหลังจาก 5 วินาที
       setTimeout(() => {
         setMessage("");
       }, 5000);
@@ -239,15 +236,15 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
     setMessage("");
     if (clearError) clearError();
     
-    // Calculate expected reward
+    // คำนวณรางวัลที่คาดหวัง
     const difficulty = quiz.difficulty || Math.floor(Math.random() * 100) + 1;
     const baseReward = Math.floor(difficulty * 2 + 50);
     setRewardAmount(baseReward.toString());
   };
 
-  // Filter available quizzes (exclude already answered)
-  const availableQuizzes = localQuizzes.filter(quiz => 
-    !localAnsweredQuizzes.some(answered => answered.quizId === quiz.quizId)
+  // กรองควิซที่ยังไม่ได้ตอบ
+  const availableQuizzes = quizzes.filter(quiz => 
+    !answeredQuizzes.some(answered => answered.quizId === quiz.quizId)
   );
 
   return (
@@ -255,27 +252,17 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
       {/* Header */}
       <div className="bg-white/10 backdrop-blur-sm border-b border-white/20 p-4">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-4">
-            {onGoBack && (
-              <button
-                onClick={onGoBack}
-                className="bg-white/20 hover:bg-white/30 px-3 py-2 rounded-lg transition-all duration-300"
-              >
-                ← กลับ
-              </button>
-            )}
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-                QuizCoin Game
-              </h1>
-              <p className="text-sm text-gray-300">
-                {selectedMode === 'solo' ? '🎯 โหมด Solo' : '👥 โหมด Pool'}
-              </p>
-            </div>
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
+              QuizCoin Game
+            </h1>
+            <p className="text-sm text-gray-300">
+              {selectedMode === 'solo' ? '🎯 โหมด Solo' : '👥 โหมด Pool'}
+            </p>
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-300">ยอดคงเหลือ QZC</p>
-            <p className="text-xl font-bold text-green-400">{qzcBalance || "0.00"}</p>
+            <p className="text-xl font-bold text-green-400">{qzcBalance}</p>
           </div>
         </div>
       </div>
@@ -292,13 +279,6 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
                   {availableQuizzes.length}
                 </div>
               </div>
-              
-              {isLoadingData && (
-                <div className="text-center py-4">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400 mx-auto"></div>
-                  <p className="text-sm text-gray-400 mt-2">กำลังโหลด...</p>
-                </div>
-              )}
               
               <div className="space-y-3 max-h-96 overflow-y-auto">
                 {availableQuizzes.length > 0 ? (
@@ -331,20 +311,13 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
                       </div>
                     </div>
                   ))
-                ) : !isLoadingData ? (
+                ) : (
                   <div className="text-center py-8">
                     <div className="text-4xl mb-2">⏳</div>
                     <p className="text-gray-400 text-sm">ไม่มีคำถามใหม่</p>
                     <p className="text-xs text-purple-400 mt-2">กรุณารอสักครู่</p>
-                    <button
-                      onClick={handleRefresh}
-                      disabled={isLoadingData}
-                      className="mt-3 px-3 py-1 bg-purple-600/30 hover:bg-purple-600/50 rounded text-xs transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isLoadingData ? 'กำลังโหลด...' : 'รีเฟรช'}
-                    </button>
                   </div>
-                ) : null}
+                )}
               </div>
             </div>
           </div>
@@ -422,7 +395,7 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
                   <p className="text-gray-400">
                     คลิกที่คำถามในแถบด้านซ้ายเพื่อเริ่มต้น
                   </p>
-                  {availableQuizzes.length === 0 && !isLoadingData && (
+                  {availableQuizzes.length === 0 && (
                     <p className="text-purple-400 text-sm mt-2">
                       ไม่มีคำถามใหม่ในขณะนี้
                     </p>
@@ -440,33 +413,24 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode, onGoBa
               <div className="space-y-4">
                 <div className="bg-white/5 rounded-xl p-4">
                   <div className="text-sm text-gray-300">คำถามที่ตอบแล้ว</div>
-                  <div className="text-2xl font-bold text-blue-400">{localUserStats?.totalAnswered || 0}</div>
+                  <div className="text-2xl font-bold text-blue-400">{userStats?.totalAnswered || 0}</div>
                 </div>
                 
                 <div className="bg-white/5 rounded-xl p-4">
                   <div className="text-sm text-gray-300">QZC ที่ได้รับ</div>
-                  <div className="text-2xl font-bold text-green-400">{parseFloat(localUserStats?.totalEarned || "0").toFixed(2)}</div>
+                  <div className="text-2xl font-bold text-green-400">{parseFloat(userStats?.totalEarned || "0").toFixed(2)}</div>
                 </div>
                 
                 <div className="bg-white/5 rounded-xl p-4">
                   <div className="text-sm text-gray-300">ชุดต่อเนื่อง</div>
-                  <div className="text-2xl font-bold text-purple-400">{localUserStats?.streak || 0}</div>
+                  <div className="text-2xl font-bold text-purple-400">{userStats?.streak || 0}</div>
                 </div>
 
                 <div className="bg-white/5 rounded-xl p-4">
                   <div className="text-sm text-gray-300">ความแม่นยำ</div>
-                  <div className="text-2xl font-bold text-yellow-400">{localUserStats?.accuracy || 0}%</div>
+                  <div className="text-2xl font-bold text-yellow-400">{userStats?.accuracy || 0}%</div>
                 </div>
               </div>
-
-              {/* Debug info (only in development) */}
-              {process.env.NODE_ENV === 'development' && (
-                <div className="mt-4 text-xs text-gray-500">
-                  <p>Available: {availableQuizzes.length}</p>
-                  <p>Answered: {localAnsweredQuizzes.length}</p>
-                  <p>Loading: {isLoadingData ? 'Yes' : 'No'}</p>
-                </div>
-              )}
             </div>
           </div>
         </div>
