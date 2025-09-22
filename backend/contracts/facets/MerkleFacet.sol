@@ -7,31 +7,28 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 contract MerkleFacet {
     event MerkleRootSubmitted(uint256 indexed quizId, bytes32 root);
 
-    /// @notice Submit Merkle root for a quiz
-    /// @param quizId The quiz ID
-    /// @param root The Merkle root
-    /// @param leaves The leaves for mapping leaf → quizId
-    function submitMerkleRoot(uint256 quizId, bytes32 root, bytes32[] calldata leaves) external {
+    /// @notice Commit Merkle root for a quiz (store only root)
+    function submitMerkleRoot(uint256 quizId, bytes32 root) external {
         LibMerkleStorage.MerkleStorage storage ms = LibMerkleStorage.merkleStorage();
         ms.quizRoots[quizId] = root;
-
-        for (uint256 i = 0; i < leaves.length; i++) {
-            ms.leafToQuizId[leaves[i]] = quizId;
-        }
 
         emit MerkleRootSubmitted(quizId, root);
     }
 
-    /// @notice Verify leaf is valid under stored root
-    function verifyQuiz(bytes32 leaf, bytes32[] calldata proof) external view returns (bool) {
+    /// @notice Verify leaf against stored Merkle root
+    function verifyQuiz(
+        uint256 quizId,
+        bytes32 leaf,
+        bytes32[] calldata proof
+    ) external view returns (bool) {
         LibMerkleStorage.MerkleStorage storage ms = LibMerkleStorage.merkleStorage();
-        uint256 quizId = ms.leafToQuizId[leaf];
-        require(quizId != 0, "MerkleFacet: Leaf not registered");
-        return MerkleProof.verify(proof, ms.quizRoots[quizId], leaf);
+        bytes32 root = ms.quizRoots[quizId];
+        require(root != 0, "MerkleFacet: Root not found");
+        return MerkleProof.verify(proof, root, leaf);
     }
 
-    /// @notice Get quizId from a leaf
-    function getQuizIdFromLeaf(bytes32 leaf) external view returns (uint256) {
-        return LibMerkleStorage.merkleStorage().leafToQuizId[leaf];
+    /// @notice Get Merkle root for a quizId
+    function getMerkleRoot(uint256 quizId) external view returns (bytes32) {
+        return LibMerkleStorage.merkleStorage().quizRoots[quizId];
     }
 }

@@ -59,7 +59,8 @@ contract QuizParticipationFacet is IQuizGameEvents {
         require(player.lastAnsweredQuestionIndex < _questionIndex, "Quiz: You have already answered a higher or equal index question.");
 
         // ✅ Verify ผ่าน MerkleFacet
-        bool verified = IMerkleFacet(address(this)).verifyQuiz(leaf, proof);
+        bool verified = IMerkleFacet(address(this)).verifyQuiz(_quizId, leaf, proof);
+
         require(verified, "Quiz: Invalid answer proof.");
 
         player.lastAnsweredQuestionIndex = _questionIndex;

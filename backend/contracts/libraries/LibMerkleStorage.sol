@@ -7,9 +7,6 @@ library LibMerkleStorage {
     struct MerkleStorage {
         // quizId => root
         mapping(uint256 => bytes32) quizRoots;
-
-        // leaf => quizId (ทำให้ verify เร็ว ไม่ต้องวน loop)
-        mapping(bytes32 => uint256) leafToQuizId;
     }
 
     function merkleStorage() internal pure returns (MerkleStorage storage ms) {

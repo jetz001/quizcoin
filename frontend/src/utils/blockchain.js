@@ -15,13 +15,14 @@ export const NETWORKS = {
 const QUIZ_DIAMOND_ABI = [
   {
     "inputs": [
-      { "internalType": "bytes32", "name": "leaf", "type": "bytes32" },
-      { "internalType": "bytes32[]", "name": "proof", "type": "bytes32[]" }
-    ],
+    { "internalType": "uint256", "name": "quizId", "type": "uint256" },
+    { "internalType": "bytes32", "name": "leaf", "type": "bytes32" },
+    { "internalType": "bytes32[]", "name": "proof", "type": "bytes32[]" }
+  ],
     "name": "verifyQuiz",
-    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
-    "stateMutability": "view",
-    "type": "function"
+  "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+  "stateMutability": "view",
+  "type": "function"
   },
   {
     "inputs": [
@@ -201,23 +202,23 @@ export class BlockchainService {
   }
 
   // Verify Merkle proof on-chain
-  async verifyMerkleProof(leaf, proof) {
-    try {
-      if (!this.quizDiamondContract) {
-        throw new Error('Quiz contract not initialized');
-      }
-
-      console.log('🔍 Verifying proof on-chain:', { leaf, proofLength: proof.length });
-      
-      const isValid = await this.quizDiamondContract.verifyQuiz(leaf, proof);
-      
-      console.log('✅ On-chain verification result:', isValid);
-      return isValid;
-    } catch (error) {
-      console.error('❌ Error verifying Merkle proof on-chain:', error);
-      return false;
+  async verifyMerkleProof(quizId, leaf, proof) {
+  try {
+    if (!this.quizDiamondContract) {
+      throw new Error('Quiz contract not initialized');
     }
+
+    console.log('🔍 Verifying proof on-chain:', { quizId, leaf, proofLength: proof.length });
+    
+    const isValid = await this.quizDiamondContract.verifyQuiz(quizId, leaf, proof);
+    
+    console.log('✅ On-chain verification result:', isValid);
+    return isValid;
+  } catch (error) {
+    console.error('❌ Error verifying Merkle proof on-chain:', error);
+    return false;
   }
+}
 
   // Submit answer with real Merkle proof
   async submitAnswer(quizId, answer, onProgress) {
@@ -245,7 +246,8 @@ export class BlockchainService {
       // Step 2: Verify proof on-chain (optional check)
       if (onProgress) onProgress('⚡ กำลังตรวจสอบด้วย Merkle Tree...');
       try {
-        const isValidOnChain = await this.verifyMerkleProof(proofData.leaf, proofData.proof);
+        const isValidOnChain = await this.verifyMerkleProof(proofData.batchId, proofData.leaf, proofData.proof);
+
         console.log('🔍 On-chain verification:', isValidOnChain);
         
         if (!isValidOnChain) {
@@ -257,7 +259,7 @@ export class BlockchainService {
 
       // Step 3: Extract questionId from quizId
       const questionIdMatch = quizId.match(/q_(\d+)_(\d+)/);
-      const questionId = questionIdMatch ? questionIdMatch[2] : Date.now().toString();
+      const questionId = questionIdMatch ? questionIdMatch[1] : Date.now().toString();
 
       if (onProgress) onProgress('📝 กำลังส่งคำตอบไปยัง blockchain...');
 

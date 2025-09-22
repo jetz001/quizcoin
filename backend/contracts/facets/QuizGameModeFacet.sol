@@ -91,7 +91,8 @@ contract QuizGameModeFacet is IQuizGameEvents {
         }
 
         // ✅ Verify with Merkle proof
-        bool isCorrect = IMerkleFacet(address(this)).verifyQuiz(_answerLeaf, _merkleProof);
+        bool isCorrect = IMerkleFacet(address(this)).verifyQuiz(_questionId, _answerLeaf, _merkleProof);
+
         require(isCorrect, "Quiz: Wrong answer or invalid proof");
 
         uint256 currentDayId = block.timestamp / (24 * 60 * 60);
