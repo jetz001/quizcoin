@@ -4,7 +4,8 @@ import { ethers } from 'ethers';
 // Merkle contract ABI
 const MERKLE_ABI = [
   "function submitMerkleRoot(uint256 quizId, bytes32 root, bytes32[] calldata leaves) external",
-  "function verifyQuiz(bytes32 leaf, bytes32[] calldata proof) external view returns (bool)"
+  "function verifyQuiz(bytes32 leaf, bytes32[] calldata proof) external view returns (bool)",
+  "function getQuizIdFromLeaf(bytes32 leaf) external view returns (uint256)"
 ];
 
 let provider, signer, merkleContract;
@@ -120,17 +121,18 @@ export async function getCurrentGasPrice() {
 
 // Check if contract is accessible
 export async function checkContractHealth() {
-  if (!merkleContract) {
-    return { accessible: false, error: "Contract not initialized" };
-  }
+ // ตรวจสอบ provider โดยตรง
+ if (!provider) {
+ return { accessible: false, error: "Provider not initialized" };
+ }
 
-  try {
-    // Try to call a view function to test connectivity
-    await merkleContract.provider.getNetwork();
-    return { accessible: true, network: await merkleContract.provider.getNetwork() };
-  } catch (error) {
-    return { accessible: false, error: error.message };
-  }
+ try {
+ // เรียกใช้ getNetwork() จาก provider ที่เราสร้างไว้ในฟังก์ชัน initializeBlockchain()
+ const network = await provider.getNetwork();
+ return { accessible: true, network: network };
+ } catch (error) {
+ return { accessible: false, error: error.message };
+ }
 }
 
 export const getProvider = () => provider;
