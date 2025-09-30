@@ -161,7 +161,7 @@ export class BlockchainService {
     try {
       console.log(`🔍 Generating Merkle proof for quiz: ${quizId}, answer: ${answer}`);
       
-      const response = await fetch('/api/generate-merkle-proof', {
+      const response = await fetch('http://localhost:3001/api/generate-merkle-proof', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -356,7 +356,7 @@ export class BlockchainService {
 
   async recordAnswer(answerData) {
     try {
-      const response = await fetch('/api/record-answer', {
+      const response = await fetch('http://localhost:3001/api/record-answer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(answerData),
@@ -372,7 +372,7 @@ export class BlockchainService {
 
   async getUserStats(userAccount) {
     try {
-      const response = await fetch('/api/get-user-stats', {
+      const response = await fetch('http://localhost:3001/api/get-user-stats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),
@@ -388,7 +388,7 @@ export class BlockchainService {
 
   async getAvailableQuizzes(userAccount) {
     try {
-      const response = await fetch('/api/get-available-quizzes', {
+      const response = await fetch('http://localhost:3001/api/get-available-quizzes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),

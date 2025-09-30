@@ -3,7 +3,7 @@ import express from 'express';
 import { ethers } from 'ethers';
 import { MerkleTree } from 'merkletreejs';
 import { generateMerkleProof } from '../services/merkleService.js';
-import { getDatabase } from '../config/database.js';
+// Firebase instance will be accessed via req.app.locals.db
 
 const router = express.Router();
 
@@ -21,7 +21,15 @@ router.post('/generate-merkle-proof', async (req, res) => {
 
     console.log(`Generating Merkle proof for quiz ${quizId}, answer: ${answer}`);
 
-    const proofData = await generateMerkleProof(quizId, answer);
+    const db = req.app.locals.db;
+    if (!db) {
+      return res.status(503).json({ 
+        success: false, 
+        error: "Firebase not available" 
+      });
+    }
+
+    const proofData = await generateMerkleProof(quizId, answer, db);
 
     res.json({
       success: true,
@@ -49,7 +57,7 @@ router.post('/verify-merkle-proof', async (req, res) => {
       });
     }
 
-    const db = getDatabase();
+    const db = req.app.locals.db;
     if (!db) {
       return res.status(503).json({ 
         success: false, 

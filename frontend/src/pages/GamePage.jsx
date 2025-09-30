@@ -59,7 +59,7 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
 
     try {
       // โหลดคำถามที่มี
-      const availableResponse = await fetch('/api/get-available-quizzes', {
+      const availableResponse = await fetch('http://localhost:3001/api/get-available-quizzes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),
@@ -74,7 +74,7 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
       }
 
       // โหลดคำถามที่ตอบแล้ว
-      const answeredResponse = await fetch('/api/get-answered-quizzes', {
+      const answeredResponse = await fetch('http://localhost:3001/api/get-answered-quizzes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),
@@ -89,7 +89,7 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
       }
 
       // โหลดสถิติผู้ใช้
-      const statsResponse = await fetch('/api/get-user-stats', {
+      const statsResponse = await fetch('http://localhost:3001/api/get-user-stats', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userAccount }),
@@ -159,7 +159,7 @@ const GamePage = ({ userAccount, qzcBalance, setQzcBalance, selectedMode }) => {
       }
 
       // ตรวจสอบคำตอบที่ถูกต้อง
-      const correctAnswer = quizData.options[quizData.answerIndex];
+      const correctAnswer = quizData.answer;
       
       if (correctAnswer === selectedOption) {
         // ส่งคำตอบผ่าน blockchain service

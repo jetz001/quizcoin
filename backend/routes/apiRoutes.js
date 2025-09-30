@@ -1,8 +1,18 @@
 // backend/routes/apiRoutes.js
 import express from 'express';
-import { getDatabase, admin } from '../config/database.js';
 
 const router = express.Router();
+
+// Debug endpoint to test Firebase connection
+router.get('/debug-firebase', (req, res) => {
+  const db = req.app.locals.db;
+  res.json({
+    success: true,
+    hasDb: !!db,
+    dbType: typeof db,
+    firebaseConnected: !!db
+  });
+});
 
 // Get available quizzes (not yet answered by user)
 router.post('/get-available-quizzes', async (req, res) => {
@@ -16,7 +26,7 @@ router.post('/get-available-quizzes', async (req, res) => {
       });
     }
 
-    const db = getDatabase();
+    const db = req.app.locals.db;
     if (!db) {
       return res.status(503).json({ 
         success: false, 
@@ -35,10 +45,9 @@ router.post('/get-available-quizzes', async (req, res) => {
       answeredQuery.docs.map(doc => doc.data().quizId)
     );
 
-    // Get all available questions
+    // Get all available questions (simplified query to avoid index requirement)
     const questionsQuery = await db.collection('questions')
       .where('isAnswered', '==', false)
-      .orderBy('createdAt', 'desc')
       .limit(50)
       .get();
 
@@ -47,7 +56,13 @@ router.post('/get-available-quizzes', async (req, res) => {
         ...doc.data(),
         quizId: doc.id
       }))
-      .filter(quiz => !answeredQuizIds.has(quiz.quizId));
+      .filter(quiz => !answeredQuizIds.has(quiz.quizId))
+      .sort((a, b) => {
+        // Sort by createdAt in descending order (newest first)
+        const aTime = a.createdAt?.toMillis?.() || 0;
+        const bTime = b.createdAt?.toMillis?.() || 0;
+        return bTime - aTime;
+      });
 
     console.log(`Found ${availableQuizzes.length} available quizzes`);
 
@@ -78,7 +93,7 @@ router.post('/get-answered-quizzes', async (req, res) => {
       });
     }
 
-    const db = getDatabase();
+    const db = req.app.locals.db;
     if (!db) {
       return res.status(503).json({ 
         success: false, 
@@ -88,20 +103,21 @@ router.post('/get-answered-quizzes', async (req, res) => {
 
     console.log(`Fetching answered quizzes for ${userAccount}`);
 
-    // Get user's answered quizzes from Firestore
+    // Get user's answered quizzes from Firestore (simplified query)
     const answeredQuery = await db.collection('user_answers')
       .where('userAccount', '==', userAccount.toLowerCase())
-      .orderBy('answeredAt', 'desc')
       .get();
 
-    const answeredQuizzes = answeredQuery.docs.map(doc => ({
-      quizId: doc.data().quizId,
-      answeredAt: doc.data().answeredAt?.toMillis() || Date.now(),
-      correct: doc.data().correct || false,
-      mode: doc.data().mode || 'solo',
-      rewardAmount: doc.data().rewardAmount || "0",
-      txHash: doc.data().txHash || null
-    }));
+    const answeredQuizzes = answeredQuery.docs
+      .map(doc => ({
+        quizId: doc.data().quizId,
+        answeredAt: doc.data().answeredAt?.toMillis() || Date.now(),
+        correct: doc.data().correct || false,
+        mode: doc.data().mode || 'solo',
+        rewardAmount: doc.data().rewardAmount || "0",
+        txHash: doc.data().txHash || null
+      }))
+      .sort((a, b) => b.answeredAt - a.answeredAt); // Sort by answeredAt descending
 
     console.log(`Found ${answeredQuizzes.length} answered quizzes for ${userAccount}`);
 
@@ -132,7 +148,7 @@ router.post('/get-user-stats', async (req, res) => {
       });
     }
 
-    const db = getDatabase();
+    const db = req.app.locals.db;
     if (!db) {
       return res.status(503).json({ 
         success: false, 
@@ -202,7 +218,7 @@ router.post('/record-answer', async (req, res) => {
       });
     }
 
-    const db = getDatabase();
+    const db = req.app.locals.db;
     if (!db) {
       return res.status(503).json({ 
         success: false, 
@@ -235,8 +251,8 @@ router.post('/record-answer', async (req, res) => {
       mode: mode || 'solo',
       rewardAmount: rewardAmount || "0",
       txHash: txHash || null,
-      answeredAt: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
+      answeredAt: req.app.locals.db.firestore.FieldValue.serverTimestamp(),
+      createdAt: req.app.locals.db.firestore.FieldValue.serverTimestamp()
     };
 
     await db.collection('user_answers').add(answerDoc);
@@ -251,7 +267,7 @@ router.post('/record-answer', async (req, res) => {
         totalAnswered: (currentStats.totalAnswered || 0) + 1,
         totalCorrect: (currentStats.totalCorrect || 0) + (correct ? 1 : 0),
         totalEarned: (parseFloat(currentStats.totalEarned || "0") + parseFloat(rewardAmount || "0")).toString(),
-        lastAnsweredAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastAnsweredAt: req.app.locals.db.firestore.FieldValue.serverTimestamp(),
         streak: correct ? (currentStats.streak || 0) + 1 : 0
       });
     } else {
@@ -260,10 +276,10 @@ router.post('/record-answer', async (req, res) => {
         totalAnswered: 1,
         totalCorrect: correct ? 1 : 0,
         totalEarned: rewardAmount || "0",
-        firstAnsweredAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastAnsweredAt: admin.firestore.FieldValue.serverTimestamp(),
+        firstAnsweredAt: req.app.locals.db.firestore.FieldValue.serverTimestamp(),
+        lastAnsweredAt: req.app.locals.db.firestore.FieldValue.serverTimestamp(),
         streak: correct ? 1 : 0,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
+        createdAt: req.app.locals.db.firestore.FieldValue.serverTimestamp()
       });
     }
 

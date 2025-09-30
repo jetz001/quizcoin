@@ -1,7 +1,7 @@
 // src/hooks/useBackendAPI.js
 import { useState, useEffect } from 'react';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'http://localhost:3001';
 
 export const useBackendAPI = (userAccount) => {
   const [answeredQuizzes, setAnsweredQuizzes] = useState([]);

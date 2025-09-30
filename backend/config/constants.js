@@ -33,7 +33,7 @@ export const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/
 
 // ABIs
 export const MERKLE_ABI = [
-  "function submitMerkleRoot(uint256 quizId, bytes32 root, bytes32[] calldata leaves) external"
+  "function submitMerkleRoot(uint256 quizId, bytes32 root) external"
 ];
 
 // Console configuration display

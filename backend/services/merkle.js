@@ -1,211 +1,225 @@
-// backend/services/merkle.js - Fixed for ES modules
-import { ethers } from 'ethers';
+// services/merkle.js
 import { MerkleTree } from 'merkletreejs';
-import { getLeavesForBatch, completeBatch } from './firebase.js';
-import { submitMerkleRoot, submitMerkleRootWithChunks } from './blockchain.js';
+import { ethers } from 'ethers';
+import { admin } from './firebase.js';
+import { callGemini } from './geminiService.js';
 
-// Configuration
-const DEFAULT_CONFIG = {
-  SUBMIT_LEAVES: false,
-  SUBMIT_CHUNK_SIZE: 500,
-  TX_DELAY: 1
-};
-
-const SUBMIT_LEAVES = (process.env.SUBMIT_LEAVES || DEFAULT_CONFIG.SUBMIT_LEAVES.toString()).toLowerCase() === "true";
-const SUBMIT_CHUNK_SIZE = parseInt(process.env.SUBMIT_CHUNK_SIZE || DEFAULT_CONFIG.SUBMIT_CHUNK_SIZE.toString(), 10);
-const TX_DELAY = parseInt(process.env.TX_DELAY || DEFAULT_CONFIG.TX_DELAY.toString(), 10);
-
-// Create answer leaf hash
-export function createAnswerLeaf(answer) {
-  return ethers.keccak256(ethers.toUtf8Bytes(answer));
-}
-
-// Build Merkle tree from batch leaves
-export async function buildMerkleTreeFromBatch(batchId) {
-  const leafData = await getLeavesForBatch(batchId);
-  
-  if (leafData.length === 0) {
-    throw new Error(`No leaves found for batch ${batchId}`);
+export async function generateBatch(db, config) {
+  if (!db) {
+    throw new Error("Firebase not initialized - cannot generate batch");
   }
 
-  const leaves = leafData.map(data => data.leaf);
+  const { TOTAL_QUESTIONS, SUB_BATCH_SIZE, SUB_BATCH_DELAY } = config;
+  const bid = Math.floor(Date.now() / 1000);
+  let created = 0;
+
+  console.log(`🎯 Starting batch ${bid} generation...`);
+
+  // Create batch document
+  try {
+    await db.collection('merkle_batches').doc(String(bid)).create({
+      batchId: bid,
+      status: 'generating',
+      totalQuestions: TOTAL_QUESTIONS,
+      totalCreated: 0,
+      progress: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (error) {
+    console.error("❌ Failed to create batch document:", error);
+    throw error;
+  }
+
+  // Generate questions in sub-batches
+  const numSubBatches = Math.ceil(TOTAL_QUESTIONS / SUB_BATCH_SIZE);
+  
+  for (let subBatch = 0; subBatch < numSubBatches; subBatch++) {
+    const startIndex = subBatch * SUB_BATCH_SIZE;
+    const endIndex = Math.min(startIndex + SUB_BATCH_SIZE, TOTAL_QUESTIONS);
+    const questionsInThisBatch = endIndex - startIndex;
+
+    console.log(`📦 Sub-batch ${subBatch + 1}/${numSubBatches}: Generating ${questionsInThisBatch} questions...`);
+
+    // Generate questions for this sub-batch
+    const subBatchPromises = [];
+    for (let i = 0; i < questionsInThisBatch; i++) {
+      subBatchPromises.push(generateAndStoreQuestion(db, bid, startIndex + i + 1));
+    }
+
+    try {
+      await Promise.all(subBatchPromises);
+      created += questionsInThisBatch;
+
+      // Update progress
+      const progress = Math.round((created / TOTAL_QUESTIONS) * 100);
+      await db.collection('merkle_batches').doc(String(bid)).update({
+        totalCreated: created,
+        progress: progress
+      });
+
+      console.log(`✅ Sub-batch ${subBatch + 1} completed. Total: ${created}/${TOTAL_QUESTIONS}`);
+    } catch (error) {
+      console.error(`❌ Error in sub-batch ${subBatch + 1}:`, error);
+      throw error;
+    }
+
+    // Delay between sub-batches (except for the last one)
+    if (subBatch < numSubBatches - 1) {
+      console.log(`⏸️ Waiting ${SUB_BATCH_DELAY}s before next sub-batch...`);
+      for (let sec = SUB_BATCH_DELAY; sec > 0; sec -= 10) {
+        console.log(`     ... still waiting (${sec}s left)`);
+        await new Promise(r => setTimeout(r, 10_000));
+      }
+    } else {
+      console.log(`🎉 Batch ${bid} generation complete.`);
+    }
+  }
+
+  // Update batch status to ready
+  try {
+    await db.collection('merkle_batches').doc(String(bid)).update({
+      status: 'ready',
+      readyAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (error) {
+    console.error("❌ Failed to update batch status:", error);
+  }
+
+  return { batchId: bid, totalCreated: created };
+}
+
+async function generateAndStoreQuestion(db, batchId, questionNumber) {
+  try {
+    const question = await generateQuizQuestion();
+    const quizId = `q_${batchId}_${questionNumber}`;
+    
+    // Calculate leaves for all possible answers
+    const answerLeaves = question.options.map(option => 
+      ethers.keccak256(ethers.toUtf8Bytes(option))
+    );
+
+    // Store question
+    await db.collection('questions').doc(quizId).create({
+      ...question,
+      quizId,
+      batchId,
+      questionNumber,
+      isAnswered: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Store merkle leaves
+    const batch = db.batch();
+    answerLeaves.forEach((leaf, index) => {
+      const leafDoc = db.collection('merkle_leaves').doc();
+      batch.create(leafDoc, {
+        quizId,
+        batchId,
+        leaf,
+        option: question.options[index],
+        isCorrect: question.options[index] === question.answer,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    
+    await batch.commit();
+    console.log(`✅ Question ${questionNumber} created and stored`);
+  } catch (error) {
+    console.error(`❌ Error generating question ${questionNumber}:`, error);
+    throw error;
+  }
+}
+
+export async function commitBatchOnChain(db, blockchain, batchId, config) {
+  console.log(`🔗 Preparing to commit batch ${batchId} on-chain...`);
+
+  if (!db) {
+    throw new Error("Firebase not initialized - cannot commit batch");
+  }
+
+  // Get batch info
+  const bdoc = await db.collection('merkle_batches').doc(String(batchId)).get();
+  if (!bdoc.exists) throw new Error("Batch not found: " + batchId);
+  
+  const batchInfo = bdoc.data();
+  if (batchInfo.status !== 'ready') {
+    console.warn("⚠️ Batch status not 'ready' — current:", batchInfo.status);
+  }
+
+  // Build Merkle tree
+  const { rootHex, leaves } = await buildMerkleFromBatch(db, batchId);
+  console.log(`🌳 Merkle root built: ${rootHex}, total leaves=${leaves.length}`);
+
+  // Update batch with root
+  await db.collection('merkle_batches').doc(String(batchId)).update({ 
+    root: rootHex, 
+    committedAt: null 
+  });
+
+  // Submit to blockchain
+  if (!blockchain.isConnected()) {
+    console.warn("⚠️ No blockchain connection -> skipping on-chain commit. Root saved to Firestore only.");
+    await db.collection('merkle_batches').doc(String(batchId)).update({
+      status: 'committed_offchain',
+      rootSavedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return { root: rootHex, totalLeaves: leaves.length, onChain: false };
+  }
+
+  try {
+    const result = await blockchain.submitMerkleRoot(batchId, rootHex, leaves);
+    
+    await db.collection('merkle_batches').doc(String(batchId)).update({
+      status: 'committed_onchain',
+      committedAt: admin.firestore.FieldValue.serverTimestamp(),
+      txs: result.txHashes
+    });
+
+    console.log(`🎉 Batch ${batchId} committed successfully on-chain.`);
+    return { 
+      root: rootHex, 
+      totalLeaves: leaves.length, 
+      onChain: true, 
+      txs: result.txHashes 
+    };
+  } catch (error) {
+    console.error("❌ Error committing to blockchain:", error);
+    throw error;
+  }
+}
+
+export async function buildMerkleFromBatch(db, batchId) {
+  if (!db) {
+    throw new Error("Firebase not initialized - cannot build Merkle tree");
+  }
+
+  const query = await db.collection('merkle_leaves').where('batchId', '==', batchId).get();
+  const leaves = query.docs.map(doc => doc.data().leaf);
   const tree = new MerkleTree(leaves, ethers.keccak256, { sortPairs: true });
   const rootHex = tree.getHexRoot();
-  
-  console.log(`🌳 Built Merkle tree for batch ${batchId}: ${rootHex} (${leaves.length} leaves)`);
-  
-  return { tree, rootHex, leaves, leafData };
+  return { rootHex, leaves };
 }
 
-// Generate Merkle proof for a specific leaf
-export function generateMerkleProof(tree, leaf) {
-  try {
-    const proof = tree.getHexProof(leaf);
-    const root = tree.getHexRoot();
-    const isValid = tree.verify(proof, leaf, root);
-    
-    return {
-      proof,
-      root,
-      isValid,
-      leaf
-    };
-  } catch (error) {
-    console.error("❌ Error generating Merkle proof:", error);
-    return null;
-  }
+async function generateQuizQuestion() {
+  const prompt = `
+Generate a single quiz question suitable for a mobile game.
+The question must have four options, and only one correct answer.
+Output JSON:
+{
+  "question": "text",
+  "options": ["A","B","C","D"],
+  "answer": "the correct option text"
 }
-
-// Verify Merkle proof offline
-export function verifyMerkleProof(proof, leaf, root) {
+`;
   try {
-    return MerkleTree.verify(proof, leaf, root, ethers.keccak256, { sortPairs: true });
+    console.log("⚡ Requesting new quiz question from Gemini...");
+    const raw = await callGemini(prompt);
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    console.log("✅ Quiz question generated.");
+    return parsed;
   } catch (error) {
-    console.error("❌ Error verifying Merkle proof:", error);
-    return false;
-  }
-}
-
-// Generate proof for quiz answer
-export async function generateProofForQuizAnswer(batchId, quizId, answer) {
-  try {
-    // Build tree from batch
-    const { tree, rootHex, leafData } = await buildMerkleTreeFromBatch(batchId);
-    
-    // Find the leaf for this quiz
-    const quizLeafData = leafData.find(data => data.quizId === quizId);
-    if (!quizLeafData) {
-      throw new Error(`Quiz ${quizId} not found in batch ${batchId}`);
-    }
-    
-    // Verify the answer is correct
-    if (quizLeafData.correctAnswer !== answer) {
-      throw new Error("Incorrect answer provided");
-    }
-    
-    // Generate proof
-    const answerLeaf = createAnswerLeaf(answer);
-    const proofData = generateMerkleProof(tree, answerLeaf);
-    
-    if (!proofData || !proofData.isValid) {
-      throw new Error("Failed to generate valid proof");
-    }
-    
-    return {
-      ...proofData,
-      batchId,
-      quizId,
-      correctAnswer: answer
-    };
-  } catch (error) {
-    console.error("❌ Error generating proof for quiz answer:", error);
+    console.error("❌ Gemini question generation failed:", error);
     throw error;
-  }
-}
-
-// Commit batch to blockchain
-export async function commitBatchToBlockchain(batchId, merkleContract) {
-  try {
-    console.log(`🔗 Committing batch ${batchId} to blockchain...`);
-    
-    const { rootHex, leaves } = await buildMerkleTreeFromBatch(batchId);
-    const txHashes = [];
-    
-    if (!SUBMIT_LEAVES) {
-      // Submit only root
-      const result = await submitMerkleRoot(batchId, rootHex, [], 2_000_000);
-      txHashes.push(result.txHash);
-    } else {
-      // Submit root with leaves in chunks
-      const hashes = await submitMerkleRootWithChunks(batchId, rootHex, leaves, SUBMIT_CHUNK_SIZE, TX_DELAY);
-      txHashes.push(...hashes);
-    }
-    
-    console.log(`🎉 Batch ${batchId} committed to blockchain successfully`);
-    
-    return {
-      root: rootHex,
-      totalLeaves: leaves.length,
-      onChain: true,
-      txs: txHashes
-    };
-  } catch (error) {
-    console.error("❌ Error committing batch to blockchain:", error);
-    throw error;
-  }
-}
-
-// Save batch off-chain only
-export async function saveBatchOffchain(batchId) {
-  try {
-    console.log(`💾 Saving batch ${batchId} off-chain only...`);
-    
-    const { rootHex, leaves } = await buildMerkleTreeFromBatch(batchId);
-    
-    // Update batch status in database
-    await completeBatch(batchId, leaves.length, rootHex, leaves, []);
-    
-    console.log(`✅ Batch ${batchId} saved off-chain`);
-    
-    return {
-      root: rootHex,
-      totalLeaves: leaves.length,
-      onChain: false
-    };
-  } catch (error) {
-    console.error("❌ Error saving batch off-chain:", error);
-    throw error;
-  }
-}
-
-// Build tree and update batch with complete information
-export async function finalizeBatch(batchId, allLeaves, allQuizIds) {
-  try {
-    if (allLeaves.length === 0) {
-      throw new Error("No leaves to build tree from");
-    }
-
-    // Build Merkle tree
-    const tree = new MerkleTree(allLeaves, ethers.keccak256, { sortPairs: true });
-    const merkleRoot = tree.getHexRoot();
-    
-    console.log(`🌳 Finalized batch ${batchId} with Merkle root: ${merkleRoot}`);
-    
-    // Update batch in database
-    await completeBatch(batchId, allLeaves.length, merkleRoot, allLeaves, allQuizIds);
-    
-    return {
-      batchId,
-      merkleRoot,
-      totalLeaves: allLeaves.length,
-      tree
-    };
-  } catch (error) {
-    console.error("❌ Error finalizing batch:", error);
-    throw error;
-  }
-}
-
-// Validate tree structure
-export function validateMerkleTree(tree, leaves) {
-  try {
-    const root = tree.getHexRoot();
-    
-    // Test that we can generate and verify proofs for all leaves
-    for (const leaf of leaves) {
-      const proof = tree.getHexProof(leaf);
-      const isValid = tree.verify(proof, leaf, root);
-      
-      if (!isValid) {
-        console.error(`❌ Invalid proof for leaf: ${leaf}`);
-        return false;
-      }
-    }
-    
-    console.log(`✅ Merkle tree validation passed for ${leaves.length} leaves`);
-    return true;
-  } catch (error) {
-    console.error("❌ Error validating Merkle tree:", error);
-    return false;
   }
 }

@@ -22,16 +22,22 @@ const config = {
     hardhat: {
       chainId: 31337,
     },
-    'bsc-testnet': {
-      url: process.env.BSC_TESTNET_RPC,
-      accounts: [
-        process.env.DEPLOYER_PRIVATE_KEY,
-        process.env.PLAYER1_PRIVATE_KEY,
-        process.env.PLAYER2_PRIVATE_KEY
-      ].filter(Boolean),
-      chainId: 97,
-      gasPrice: 0.1 * 1e9,
+    localhost: {
+      url: "http://127.0.0.1:8545",
+      chainId: 31337,
     },
+    ...(process.env.BSC_TESTNET_RPC && {
+      'bsc-testnet': {
+        url: process.env.BSC_TESTNET_RPC,
+        accounts: [
+          process.env.DEPLOYER_PRIVATE_KEY,
+          process.env.PLAYER1_PRIVATE_KEY,
+          process.env.PLAYER2_PRIVATE_KEY
+        ].filter(Boolean),
+        chainId: 97,
+        gasPrice: 0.1 * 1e9,
+      },
+    }),
   },
 
   etherscan: {

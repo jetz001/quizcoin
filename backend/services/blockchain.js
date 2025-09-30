@@ -1,140 +1,97 @@
-// backend/services/blockchain.js - Fixed for ES modules
+// services/blockchain.js
 import { ethers } from 'ethers';
 
-// Merkle contract ABI
 const MERKLE_ABI = [
-  "function submitMerkleRoot(uint256 quizId, bytes32 root, bytes32[] calldata leaves) external",
-  "function verifyQuiz(bytes32 leaf, bytes32[] calldata proof) external view returns (bool)",
-  "function getQuizIdFromLeaf(bytes32 leaf) external view returns (uint256)"
+  "function submitMerkleRoot(uint256 quizId, bytes32 root) external"
 ];
 
-let provider, signer, merkleContract;
-
-export async function initializeBlockchain() {
-  const PRIVATE_KEY = process.env.PRIVATE_KEY;
-  const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
-  const PROVIDER_URL = process.env.PROVIDER_URL;
-
-  if (!PRIVATE_KEY || !CONTRACT_ADDRESS || !PROVIDER_URL) {
-    console.warn("⚠️ Blockchain config incomplete - features will be disabled");
-    return { provider: null, signer: null, merkleContract: null };
+export class BlockchainService {
+  constructor() {
+    this.provider = null;
+    this.signer = null;
+    this.merkleContract = null;
+    this.config = {
+      privateKey: process.env.PRIVATE_KEY,
+      contractAddress: process.env.CONTRACT_ADDRESS,
+      providerUrl: process.env.PROVIDER_URL,
+      submitLeaves: process.env.SUBMIT_LEAVES === 'true',
+      submitChunkSize: parseInt(process.env.SUBMIT_CHUNK_SIZE || '500'),
+      txDelay: parseInt(process.env.TX_DELAY || '1')
+    };
   }
 
-  try {
-    provider = new ethers.JsonRpcProvider(PROVIDER_URL);
-    signer = new ethers.Wallet(PRIVATE_KEY, provider);
-    merkleContract = new ethers.Contract(CONTRACT_ADDRESS, MERKLE_ABI, signer);
+  async initialize() {
+    const { privateKey, contractAddress, providerUrl } = this.config;
     
-    // Test connection
-    await provider.getNetwork();
-    
-    return { provider, signer, merkleContract };
-  } catch (error) {
-    console.error("❌ Blockchain connection failed:", error.message);
-    return { provider: null, signer: null, merkleContract: null };
-  }
-}
+    if (!privateKey || !contractAddress || !providerUrl) {
+      console.warn("⚠️ Blockchain config incomplete - on-chain submission disabled");
+      return { merkleContract: null };
+    }
 
-// Submit Merkle root to blockchain
-export async function submitMerkleRoot(batchId, rootHex, leaves = [], gasLimit = 2_000_000) {
-  if (!merkleContract) {
-    throw new Error("Merkle contract not initialized");
-  }
-
-  try {
-    console.log(`🚀 Submitting Merkle root for batch ${batchId}...`);
-    const tx = await merkleContract.submitMerkleRoot(batchId, rootHex, leaves, { gasLimit });
-    console.log("📡 Transaction sent:", tx.hash);
-    
-    const receipt = await tx.wait();
-    console.log("✅ Transaction confirmed:", tx.hash);
-    
-    return { txHash: tx.hash, receipt };
-  } catch (error) {
-    console.error("❌ Error submitting Merkle root:", error);
-    throw error;
-  }
-}
-
-// Submit Merkle root with leaves in chunks
-export async function submitMerkleRootWithChunks(batchId, rootHex, leaves, chunkSize = 500, txDelay = 1) {
-  if (!merkleContract) {
-    throw new Error("Merkle contract not initialized");
-  }
-
-  const txHashes = [];
-  
-  for (let i = 0; i < leaves.length; i += chunkSize) {
-    const chunk = leaves.slice(i, i + chunkSize);
-    console.log(`🚀 Submitting chunk ${Math.floor(i / chunkSize) + 1} (${chunk.length} leaves)...`);
-    
     try {
-      const tx = await merkleContract.submitMerkleRoot(batchId, rootHex, chunk, { gasLimit: 6_000_000 });
-      txHashes.push(tx.hash);
-      console.log("📡 Tx sent:", tx.hash, " waiting confirmation...");
+      this.provider = new ethers.JsonRpcProvider(providerUrl);
+      this.signer = new ethers.Wallet(privateKey, this.provider);
+      this.merkleContract = new ethers.Contract(contractAddress, MERKLE_ABI, this.signer);
       
-      await tx.wait();
-      console.log("✅ Tx confirmed:", tx.hash);
+      console.log("✅ Connected to blockchain");
+      console.log(`   - Contract: ${contractAddress}`);
+      console.log(`   - Signer: ${this.signer.address}`);
       
-      // Delay between transactions
-      if (i + chunkSize < leaves.length) {
-        await new Promise(r => setTimeout(r, txDelay * 1000));
-      }
+      return { merkleContract: this.merkleContract };
     } catch (error) {
-      console.error(`❌ Error submitting chunk ${Math.floor(i / chunkSize) + 1}:`, error);
+      console.error("❌ Blockchain connection failed:", error.message);
+      return { merkleContract: null };
+    }
+  }
+
+  async submitMerkleRoot(batchId, rootHex, leaves = []) {
+    if (!this.merkleContract) {
+      throw new Error("Blockchain not initialized");
+    }
+
+    const { submitLeaves, submitChunkSize, txDelay } = this.config;
+    const txHashes = [];
+
+    try {
+      if (!submitLeaves || leaves.length === 0) {
+        // Submit root only
+        console.log("🚀 Submitting root-only transaction...");
+        const tx = await this.merkleContract.submitMerkleRoot(
+          batchId, 
+          rootHex, 
+          { gasLimit: 2_000_000 }
+        );
+        console.log("📡 Transaction sent:", tx.hash);
+        await tx.wait();
+        console.log("✅ Transaction confirmed:", tx.hash);
+        txHashes.push(tx.hash);
+      } else {
+        // Leaves submission no longer supported by facet; ignore leaves
+      }
+
+      return {
+        success: true,
+        txHashes,
+        onChain: true
+      };
+
+    } catch (error) {
+      console.error("❌ Error submitting Merkle root:", error);
       throw error;
     }
   }
 
-  return txHashes;
-}
-
-// Verify Merkle proof on-chain
-export async function verifyMerkleProofOnChain(leaf, proof) {
-  if (!merkleContract) {
-    throw new Error("Merkle contract not initialized");
+  getSignerAddress() {
+    return this.signer?.address || null;
   }
 
-  try {
-    const isValid = await merkleContract.verifyQuiz(leaf, proof);
-    return isValid;
-  } catch (error) {
-    console.error("❌ Error verifying Merkle proof on-chain:", error);
-    return false;
+  isConnected() {
+    return !!this.merkleContract;
   }
 }
 
-// Get current gas price
-export async function getCurrentGasPrice() {
-  if (!provider) {
-    return null;
-  }
-
-  try {
-    const gasPrice = await provider.getFeeData();
-    return gasPrice;
-  } catch (error) {
-    console.error("❌ Error getting gas price:", error);
-    return null;
-  }
+export async function initializeBlockchain() {
+  const blockchainService = new BlockchainService();
+  await blockchainService.initialize();
+  return blockchainService;
 }
-
-// Check if contract is accessible
-export async function checkContractHealth() {
- // ตรวจสอบ provider โดยตรง
- if (!provider) {
- return { accessible: false, error: "Provider not initialized" };
- }
-
- try {
- // เรียกใช้ getNetwork() จาก provider ที่เราสร้างไว้ในฟังก์ชัน initializeBlockchain()
- const network = await provider.getNetwork();
- return { accessible: true, network: network };
- } catch (error) {
- return { accessible: false, error: error.message };
- }
-}
-
-export const getProvider = () => provider;
-export const getSigner = () => signer;
-export const getMerkleContract = () => merkleContract;

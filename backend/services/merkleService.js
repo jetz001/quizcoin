@@ -96,23 +96,23 @@ export const commitBatchOnChain = async (batchId, submitChunkSize = CONFIG.SUBMI
 };
 
 // Generate Merkle proof for a specific answer
-export const generateMerkleProof = async (quizId, answer) => {
+export const generateMerkleProof = async (quizId, answer, db) => {
   try {
-    const db = getDatabase();
     if (!db) {
       throw new Error("Firebase not available");
     }
 
     console.log(`Generating Merkle proof for quiz ${quizId}, answer: ${answer}`);
 
-    // Find which batch this quiz belongs to
+    // Find the specific leaf that matches this quiz and answer
     const leavesQuery = await db.collection('merkle_leaves')
       .where('quizId', '==', quizId)
+      .where('option', '==', answer)
       .limit(1)
       .get();
 
     if (leavesQuery.empty) {
-      throw new Error("Quiz not found in Merkle tree");
+      throw new Error(`Answer "${answer}" not found for quiz ${quizId} in Merkle tree`);
     }
 
     const leafDoc = leavesQuery.docs[0];

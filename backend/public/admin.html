@@ -135,6 +135,15 @@
                 <button class="btn btn-success" onclick="loadBatches()">Load Batches</button>
                 <div id="batchList" style="margin-top: 15px;"></div>
             </div>
+            
+            <div class="card">
+                <h3>Admin Role Management</h3>
+                <div class="form-group">
+                    <label>Frontend Address</label>
+                    <input type="text" id="frontendAddress" placeholder="0x..." style="font-family: monospace;">
+                </div>
+                <button class="btn btn-secondary" onclick="grantAdminRole()">Grant Admin Role</button>
+            </div>
         </div>
         
         <div class="logs">
@@ -146,7 +155,7 @@
 
     <script>
         let userAccount = null;
-        const BACKEND_URL = 'http://localhost:8000';
+        const BACKEND_URL = 'http://localhost:3001';
         
         function log(message, type = 'info') {
             const logContainer = document.getElementById('logContainer');
@@ -236,6 +245,40 @@
                 }
             } catch (error) {
                 log(`Failed to load batches: ${error.message}`, 'error');
+            }
+        }
+        
+        async function grantAdminRole() {
+            const address = document.getElementById('frontendAddress').value.trim();
+            
+            if (!address) {
+                log('Please enter a frontend address', 'error');
+                return;
+            }
+            
+            if (!address.startsWith('0x') || address.length !== 42) {
+                log('Invalid address format. Please enter a valid Ethereum address', 'error');
+                return;
+            }
+            
+            try {
+                log(`Granting admin role to ${address}...`);
+                
+                const response = await fetch(`${BACKEND_URL}/admin/grant-admin-role`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    log(`Admin role granted to ${address}`, 'success');
+                } else {
+                    log(`Failed to grant admin role: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Error granting admin role: ${error.message}`, 'error');
             }
         }
         
