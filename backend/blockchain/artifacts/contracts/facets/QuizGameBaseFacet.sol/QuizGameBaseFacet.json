@@ -1,0 +1,657 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "QuizGameBaseFacet",
+  "sourceName": "contracts/facets/QuizGameBaseFacet.sol",
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "solver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "submittedAnswerHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "isCorrect",
+          "type": "bool"
+        }
+      ],
+      "name": "AnswerSubmitted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "buyer",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "cost",
+          "type": "uint256"
+        }
+      ],
+      "name": "HintPurchased",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "answerLeaf",
+          "type": "bytes32"
+        }
+      ],
+      "name": "LeafRegistered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "answerLeaf",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "solver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "rewardAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "LeafSolved",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "player",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "quizId",
+          "type": "uint256"
+        }
+      ],
+      "name": "PlayerJoinedQuiz",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "oldAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "newAddress",
+          "type": "address"
+        }
+      ],
+      "name": "PoolManagerAddressUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "activator",
+          "type": "address"
+        }
+      ],
+      "name": "QuestionActivatedFromBank",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuestionClosed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "creator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "difficultyLevel",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "baseRewardAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuestionCreated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "startTime",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuestionRewardWindowStarted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "player",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "quizId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionIndex",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "submittedAnswerIndex",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "isCorrect",
+          "type": "bool"
+        }
+      ],
+      "name": "QuizAnswerSubmitted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "oldAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "newAddress",
+          "type": "address"
+        }
+      ],
+      "name": "QuizCoinAddressUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "creator",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "quizId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "rewardAmount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "totalQuestions",
+          "type": "uint256"
+        }
+      ],
+      "name": "QuizCreated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "questionId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "solver",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "rewardAmount",
+          "type": "uint256"
+        }
+      ],
+      "name": "RewardDistributed",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "CREATOR_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "DEFAULT_ADMIN_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "REWARD_DISTRIBUTOR_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getBaseRewardForLevel99",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getGameStartTimestamp",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getHalvingPeriodSeconds",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getLevel100QuestionValiditySeconds",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getMinRewardAfterHalving",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getNextQuestionId",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getPoolManagerAddress",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getPoolRewardWindowDuration",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_questionId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getQuestion",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "correctAnswerHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "hintHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "questionCreator",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "difficultyLevel",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "baseRewardAmount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "isClosed",
+          "type": "bool"
+        },
+        {
+          "internalType": "enum LibAppStorage.QuestionMode",
+          "name": "mode",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint256",
+          "name": "blockCreationTime",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "firstCorrectAnswerTime",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "firstSolverAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "address[]",
+          "name": "poolCorrectSolvers",
+          "type": "address[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getQuizCoinAddress",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getRewardForLevel100",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getTreasuryFeePercentage",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "hasRole",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "initializeQuizGame",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_newPoolManagerAddress",
+          "type": "address"
+        }
+      ],
+      "name": "setPoolManagerAddress",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_newQuizCoinAddress",
+          "type": "address"
+        }
+      ],
+      "name": "setQuizCoinAddress",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x60808060405234601557610d71908161001b8239f35b600080fdfe608080604052600436101561001357600080fd5b60003560e01c908163178f2e2414610be6575080631fdb946f14610ba957806332e4bb0a14610b6c5780634894e46d14610b2f578063589a7b2e14610af25780636434e22714610ab55780638176975914610a7857806382a0336914610a425780638aeda25a14610a055780638fe3d85d1461070c57806391d1485414610680578063a217fddf14610655578063a85c1de314610618578063a99b4f97146105db578063ab95b1a21461048c578063bea8628c1461044f578063c2bd69b9146102c7578063c3e037b41461028a5763db88176f146100f057600080fd5b34610285576020366003190112610285576004356000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652031602052604060002060038101549060048101549160018060a01b03600583015416926006830154926007810154600882015460ff8160081c16600984015491600a85015493600c60018060a01b03600b880154169601986040519a8b9860208c549d8e8152019c8d9c60005260206000209060005b818110610260575050509060ff949392916101bc8b60209f038c610c2d565b6040519d8e61016081019d8152015260408d015260608c015260808b015216151560a0890152600281101561024a5760c088015260e08701526101008601526101208501526101606101408501525190819052829161018083019160005b818110610228575050500390f35b82516001600160a01b031684528594506020938401939092019160010161021a565b634e487b7160e01b600052602160045260246000fd5b90919e8f600160a01b6001900390541681526020019e6001019060010191909161019d565b600080fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202854604051908152f35b34610285576020366003190112610285576102e0610c17565b600080516020610cdc83398151915254604051632474521560e21b81526004810191909152336024820152602081604481305afa80156104435761032c91600091610414575b50610c7d565b6001600160a01b0381169081156103c157600080516020610d1c83398151915254604080516001600160a01b0392831681529290911660208301527f1c61efe681360fd4a3becb0723003e5495cba480ec9b47150b00fb57a5044e2b91a16bffffffffffffffffffffffff60a01b600080516020610d1c833981519152541617600080516020610d1c83398151915255600080f35b60405162461bcd60e51b815260206004820152602560248201527f5175697a3a205175697a436f696e20616464726573732063616e6e6f74206265604482015264207a65726f60d81b6064820152608490fd5b610436915060203d60201161043c575b61042e8183610c2d565b810190610c65565b83610326565b503d610424565b6040513d6000823e3d90fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202a54604051908152f35b34610285576020366003190112610285576104a5610c17565b600080516020610cdc83398151915254604051632474521560e21b81526004810191909152336024820152602081604481305afa8015610443576104f0916000916104145750610c7d565b6001600160a01b03811690811561058557600080516020610cfc83398151915254604080516001600160a01b0392831681529290911660208301527f7515b6cf68fce599fb6992850f676543b5a8ab4b13df77e0f6c308e19694dc6991a16bffffffffffffffffffffffff60a01b600080516020610cfc833981519152541617600080516020610cfc83398151915255600080f35b60405162461bcd60e51b815260206004820152602860248201527f5175697a3a20506f6f6c4d616e6167657220616464726573732063616e6e6f74604482015267206265207a65726f60c01b6064820152608490fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202754604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202954604051908152f35b34610285576000366003190112610285576020600080516020610cdc83398151915254604051908152f35b34610285576040366003190112610285576024356001600160a01b038116810361028557604051632474521560e21b815260048035908201526001600160a01b03919091166024820152602081604481305afa8015610443576020916000916106ef575b506040519015158152f35b6107069150823d841161043c5761042e8183610c2d565b826106e4565b34610285576000366003190112610285577f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202d546109c05760405163a217fddf60e01b8152602081600481305afa9081156104435760009161098e575b50600080516020610cdc833981519152557fb814ff4a26ea3ec5cd1fa579daad86324826254265f3acfec78303a19845b4497f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652023557f828634d95e775031b9ff576b159a8509d3053581a8c9c4d7d86899e0afcd882f7f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202455678ac7230489e800007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520255560b47f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202655620151807f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520275569010f0cf064dd592000007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520285569021e19e0c9bab24000007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202955630784ce007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202a5568056bc75e2d631000007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202b5560327f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202c5560017f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202e55427f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202d55005b90506020813d6020116109b8575b816109a960209383610c2d565b81010312610285575181610768565b3d915061099c565b60405162461bcd60e51b815260206004820152601d60248201527f5175697a47616d653a20416c726561647920696e697469616c697a65640000006044820152606490fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202454604051908152f35b3461028557600036600319011261028557600080516020610cfc833981519152546040516001600160a01b039091168152602090f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202654604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202c54604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202e54604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202d54604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202354604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202b54604051908152f35b3461028557600036600319011261028557600080516020610d1c833981519152546001600160a01b03168152602090f35b600435906001600160a01b038216820361028557565b90601f8019910116810190811067ffffffffffffffff821117610c4f57604052565b634e487b7160e01b600052604160045260246000fd5b90816020910312610285575180151581036102855790565b15610c8457565b60405162461bcd60e51b815260206004820152602960248201527f416363657373436f6e74726f6c3a2043616c6c6572206973206e6f742061206760448201526830b6b29030b236b4b760b91b6064820152608490fdfe4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520224f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520394f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203aa2646970667358221220ec831c77efc2a513a239f44cce8ddf0d5633eca6524e7c5bb72532527ecb022364736f6c634300081c0033",
+  "deployedBytecode": "0x608080604052600436101561001357600080fd5b60003560e01c908163178f2e2414610be6575080631fdb946f14610ba957806332e4bb0a14610b6c5780634894e46d14610b2f578063589a7b2e14610af25780636434e22714610ab55780638176975914610a7857806382a0336914610a425780638aeda25a14610a055780638fe3d85d1461070c57806391d1485414610680578063a217fddf14610655578063a85c1de314610618578063a99b4f97146105db578063ab95b1a21461048c578063bea8628c1461044f578063c2bd69b9146102c7578063c3e037b41461028a5763db88176f146100f057600080fd5b34610285576020366003190112610285576004356000527f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652031602052604060002060038101549060048101549160018060a01b03600583015416926006830154926007810154600882015460ff8160081c16600984015491600a85015493600c60018060a01b03600b880154169601986040519a8b9860208c549d8e8152019c8d9c60005260206000209060005b818110610260575050509060ff949392916101bc8b60209f038c610c2d565b6040519d8e61016081019d8152015260408d015260608c015260808b015216151560a0890152600281101561024a5760c088015260e08701526101008601526101208501526101606101408501525190819052829161018083019160005b818110610228575050500390f35b82516001600160a01b031684528594506020938401939092019160010161021a565b634e487b7160e01b600052602160045260246000fd5b90919e8f600160a01b6001900390541681526020019e6001019060010191909161019d565b600080fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202854604051908152f35b34610285576020366003190112610285576102e0610c17565b600080516020610cdc83398151915254604051632474521560e21b81526004810191909152336024820152602081604481305afa80156104435761032c91600091610414575b50610c7d565b6001600160a01b0381169081156103c157600080516020610d1c83398151915254604080516001600160a01b0392831681529290911660208301527f1c61efe681360fd4a3becb0723003e5495cba480ec9b47150b00fb57a5044e2b91a16bffffffffffffffffffffffff60a01b600080516020610d1c833981519152541617600080516020610d1c83398151915255600080f35b60405162461bcd60e51b815260206004820152602560248201527f5175697a3a205175697a436f696e20616464726573732063616e6e6f74206265604482015264207a65726f60d81b6064820152608490fd5b610436915060203d60201161043c575b61042e8183610c2d565b810190610c65565b83610326565b503d610424565b6040513d6000823e3d90fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202a54604051908152f35b34610285576020366003190112610285576104a5610c17565b600080516020610cdc83398151915254604051632474521560e21b81526004810191909152336024820152602081604481305afa8015610443576104f0916000916104145750610c7d565b6001600160a01b03811690811561058557600080516020610cfc83398151915254604080516001600160a01b0392831681529290911660208301527f7515b6cf68fce599fb6992850f676543b5a8ab4b13df77e0f6c308e19694dc6991a16bffffffffffffffffffffffff60a01b600080516020610cfc833981519152541617600080516020610cfc83398151915255600080f35b60405162461bcd60e51b815260206004820152602860248201527f5175697a3a20506f6f6c4d616e6167657220616464726573732063616e6e6f74604482015267206265207a65726f60c01b6064820152608490fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202754604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202954604051908152f35b34610285576000366003190112610285576020600080516020610cdc83398151915254604051908152f35b34610285576040366003190112610285576024356001600160a01b038116810361028557604051632474521560e21b815260048035908201526001600160a01b03919091166024820152602081604481305afa8015610443576020916000916106ef575b506040519015158152f35b6107069150823d841161043c5761042e8183610c2d565b826106e4565b34610285576000366003190112610285577f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202d546109c05760405163a217fddf60e01b8152602081600481305afa9081156104435760009161098e575b50600080516020610cdc833981519152557fb814ff4a26ea3ec5cd1fa579daad86324826254265f3acfec78303a19845b4497f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd5652023557f828634d95e775031b9ff576b159a8509d3053581a8c9c4d7d86899e0afcd882f7f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202455678ac7230489e800007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520255560b47f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202655620151807f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520275569010f0cf064dd592000007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520285569021e19e0c9bab24000007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202955630784ce007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202a5568056bc75e2d631000007f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202b5560327f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202c5560017f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202e55427f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202d55005b90506020813d6020116109b8575b816109a960209383610c2d565b81010312610285575181610768565b3d915061099c565b60405162461bcd60e51b815260206004820152601d60248201527f5175697a47616d653a20416c726561647920696e697469616c697a65640000006044820152606490fd5b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202454604051908152f35b3461028557600036600319011261028557600080516020610cfc833981519152546040516001600160a01b039091168152602090f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202654604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202c54604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202e54604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202d54604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202354604051908152f35b346102855760003660031901126102855760207f4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565202b54604051908152f35b3461028557600036600319011261028557600080516020610d1c833981519152546001600160a01b03168152602090f35b600435906001600160a01b038216820361028557565b90601f8019910116810190811067ffffffffffffffff821117610c4f57604052565b634e487b7160e01b600052604160045260246000fd5b90816020910312610285575180151581036102855790565b15610c8457565b60405162461bcd60e51b815260206004820152602960248201527f416363657373436f6e74726f6c3a2043616c6c6572206973206e6f742061206760448201526830b6b29030b236b4b760b91b6064820152608490fdfe4f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520224f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd56520394f2f104a7ea12e35172792673c68fe1423b90b4f6b86a6c5f5a9a85bd565203aa2646970667358221220ec831c77efc2a513a239f44cce8ddf0d5633eca6524e7c5bb72532527ecb022364736f6c634300081c0033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

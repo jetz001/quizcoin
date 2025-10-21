@@ -2,7 +2,8 @@
 import { MerkleTree } from 'merkletreejs';
 import { ethers } from 'ethers';
 import { admin } from './firebase.js';
-import { callGemini } from './geminiService.js';
+import { generateQuizQuestion } from './geminiService.js';
+import { updateQuestionMerkleRoot } from './smartContractService.js';
 
 export async function generateBatch(db, config) {
   if (!db) {
@@ -88,9 +89,44 @@ export async function generateBatch(db, config) {
   return { batchId: bid, totalCreated: created };
 }
 
-async function generateAndStoreQuestion(db, batchId, questionNumber) {
+async function generateAndStoreQuestion(db, batchId, questionNumber, retryCount = 0) {
+  const maxRetries = 5;
+  
+  if (retryCount > maxRetries) {
+    console.error(`❌ Max retries (${maxRetries}) exceeded for question ${questionNumber}`);
+    throw new Error('Too many retries - unable to generate valid question');
+  }
+  
   try {
     const question = await generateQuizQuestion();
+    
+    // Check if question generation completely failed
+    if (!question) {
+      console.error('❌ Question generation failed completely');
+      throw new Error('Failed to generate question');
+    }
+    
+    // Validate question has required fields (fallback should have provided these)
+    if (!question.question || !question.options || !question.answer || !question.difficultyLevel || !question.category) {
+      console.error('❌ Question missing required fields:', {
+        hasQuestion: !!question.question,
+        hasOptions: !!question.options,
+        hasAnswer: !!question.answer,
+        hasDifficultyLevel: !!question.difficultyLevel,
+        hasCategory: !!question.category
+      });
+      throw new Error('Generated question is missing required fields');
+    }
+    
+    // Check for Mars/Red Planet duplicates specifically
+    const questionLower = question.question.toLowerCase();
+    if (questionLower.includes('red planet') || 
+        (questionLower.includes('mars') && questionLower.includes('planet')) ||
+        questionLower.includes('known as the') && questionLower.includes('planet')) {
+      console.log(`⚠️ Detected Mars/Red Planet question, regenerating... (retry ${retryCount + 1}/${maxRetries})`);
+      return generateAndStoreQuestion(db, batchId, questionNumber, retryCount + 1); // Retry
+    }
+    
     const quizId = `q_${batchId}_${questionNumber}`;
     
     // Calculate leaves for all possible answers
@@ -98,10 +134,14 @@ async function generateAndStoreQuestion(db, batchId, questionNumber) {
       ethers.keccak256(ethers.toUtf8Bytes(option))
     );
 
-    // Store question
+    // Store question with proper difficulty level
     await db.collection('questions').doc(quizId).create({
-      ...question,
       quizId,
+      question: question.question,
+      options: question.options,
+      answer: question.answer,
+      category: question.category || 'general',
+      difficulty: question.difficultyLevel, // Use AI difficulty level
       batchId,
       questionNumber,
       isAnswered: false,
@@ -123,7 +163,7 @@ async function generateAndStoreQuestion(db, batchId, questionNumber) {
     });
     
     await batch.commit();
-    console.log(`✅ Question ${questionNumber} created and stored`);
+    console.log(`✅ Question ${questionNumber} created and stored (Level: ${question.difficultyLevel}, Category: ${question.category})`);
   } catch (error) {
     console.error(`❌ Error generating question ${questionNumber}:`, error);
     throw error;
@@ -176,7 +216,25 @@ export async function commitBatchOnChain(db, blockchain, batchId, config) {
     });
 
     console.log(`🎉 Batch ${batchId} committed successfully on-chain.`);
-    return { 
+    
+    // 🔄 AUTO-SYNC: Update question ID 1's Merkle root to match the new batch
+    // This fixes the architecture issue where manual updates were needed
+    try {
+      if (blockchain && blockchain.merkleContract) {
+        const syncResult = await updateQuestionMerkleRoot(batchId, rootHex, blockchain.merkleContract, db);
+        if (syncResult.success) {
+          console.log(`✅ Auto-sync completed: Question ID 1 now has Merkle root from batch ${batchId}`);
+        } else {
+          console.warn(`⚠️ Auto-sync failed: ${syncResult.error}`);
+        }
+      } else {
+        console.warn(`⚠️ Auto-sync skipped: blockchain.merkleContract not available`);
+      }
+    } catch (syncError) {
+      console.warn(`⚠️ Auto-sync error (non-blocking):`, syncError.message);
+    }
+    
+    return {
       root: rootHex, 
       totalLeaves: leaves.length, 
       onChain: true, 
@@ -198,28 +256,4 @@ export async function buildMerkleFromBatch(db, batchId) {
   const tree = new MerkleTree(leaves, ethers.keccak256, { sortPairs: true });
   const rootHex = tree.getHexRoot();
   return { rootHex, leaves };
-}
-
-async function generateQuizQuestion() {
-  const prompt = `
-Generate a single quiz question suitable for a mobile game.
-The question must have four options, and only one correct answer.
-Output JSON:
-{
-  "question": "text",
-  "options": ["A","B","C","D"],
-  "answer": "the correct option text"
-}
-`;
-  try {
-    console.log("⚡ Requesting new quiz question from Gemini...");
-    const raw = await callGemini(prompt);
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    console.log("✅ Quiz question generated.");
-    return parsed;
-  } catch (error) {
-    console.error("❌ Gemini question generation failed:", error);
-    throw error;
-  }
 }

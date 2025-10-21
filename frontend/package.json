@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:organized": "vite --config vite.config.organized.js",
     "build": "vite build",
+    "build:organized": "vite build --config vite.config.organized.js",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -14,7 +16,8 @@
     "firebase": "^12.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-icons": "^5.5.0"
+    "react-icons": "^5.5.0",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",

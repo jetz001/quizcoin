@@ -1,0 +1,37 @@
+{
+  "services": {
+    "database": {
+      "required": true,
+      "timeout": 10000,
+      "retries": 3,
+      "dependencies": []
+    },
+    "blockchain": {
+      "required": true,
+      "timeout": 15000,
+      "retries": 2,
+      "dependencies": ["database"]
+    },
+    "quiz-generator": {
+      "required": false,
+      "timeout": 5000,
+      "retries": 1,
+      "dependencies": ["database"]
+    },
+    "merkle-tree": {
+      "required": true,
+      "timeout": 5000,
+      "retries": 2,
+      "dependencies": ["database", "blockchain"]
+    }
+  },
+  "monitoring": {
+    "healthCheckInterval": 30000,
+    "logLevel": "info",
+    "metricsEnabled": true
+  },
+  "shutdown": {
+    "gracefulTimeout": 15000,
+    "forceTimeout": 30000
+  }
+}

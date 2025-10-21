@@ -1,9 +1,11 @@
 // src/hooks/useBackendAPI.js
 import { useState, useEffect } from 'react';
+import { socketService } from '../services/socketService.js';
 
 const BACKEND_URL = 'http://localhost:3001';
 
 export const useBackendAPI = (userAccount) => {
+  const [quizzes, setQuizzes] = useState([]);
   const [answeredQuizzes, setAnsweredQuizzes] = useState([]);
   const [stats, setStats] = useState({
     totalAnswered: 0,
@@ -12,13 +14,102 @@ export const useBackendAPI = (userAccount) => {
   });
   const [loading, setLoading] = useState(false);
 
+  // Load available quizzes from backend
+  const loadAvailableQuizzes = async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/get-available-quizzes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userAccount })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          console.log("✅ Loaded quizzes from backend:", data.quizzes.length);
+          return data.quizzes;
+        }
+      } else {
+        console.error("Backend API not available, status:", response.status);
+      }
+    } catch (error) {
+      console.error("Error loading available quizzes:", error);
+    }
+    return [];
+  };
+
   // Load user data from backend
   useEffect(() => {
-    const loadBackendData = async () => {
-      if (!userAccount) return;
+    if (!userAccount) return;
 
+    // Connect to Socket.IO for real-time updates
+    socketService.connect();
+    
+    // Set up event listeners for real-time updates
+    const handleFreshQuestion = (data) => {
+      console.log('🔄 Fresh question created, updating question ID in real-time...', data);
+      
+      // Update question ID immediately without full reload
+      setQuizzes(prevQuizzes => {
+        console.log('📋 Fresh question: Updating', prevQuizzes.length, 'quizzes to question ID', data.newQuestionId);
+        const updatedQuizzes = prevQuizzes.map(quiz => ({
+          ...quiz,
+          blockchainQuestionId: data.newQuestionId
+        }));
+        console.log('✅ Fresh question: All quizzes updated to question ID', data.newQuestionId);
+        console.log('📋 First quiz after fresh question update:', updatedQuizzes[0]?.quizId, 'blockchainId:', updatedQuizzes[0]?.blockchainQuestionId);
+        return updatedQuizzes;
+      });
+      
+      console.log(`🎯 Updated all quizzes to use question ID ${data.newQuestionId} (no server reload needed)`);
+    };
+
+    const handleQuizCompleted = (data) => {
+      if (data.userAccount === userAccount.toLowerCase()) {
+        console.log('🎯 Quiz completed, reloading data...', data);
+        setTimeout(() => {
+          loadBackendData();
+        }, 500); // Quick reload for current user
+      }
+    };
+
+    const handleQuestionIdUpdate = (data) => {
+      console.log('🔄 Question ID updated, applying to all quizzes...', data);
+      
+      // Update question ID for all quizzes immediately
+      setQuizzes(prevQuizzes => {
+        console.log('📋 Updating', prevQuizzes.length, 'quizzes with new question ID', data.newQuestionId);
+        if (prevQuizzes.length === 0) {
+          console.log('⚠️ No quizzes to update, skipping question ID update');
+          return prevQuizzes;
+        }
+        
+        const updatedQuizzes = prevQuizzes.map(quiz => ({
+          ...quiz,
+          blockchainQuestionId: data.newQuestionId
+        }));
+        console.log('✅ Updated quizzes:', updatedQuizzes.length, 'items with question ID', data.newQuestionId);
+        console.log('📋 First quiz after update:', updatedQuizzes[0]?.quizId, 'blockchainId:', updatedQuizzes[0]?.blockchainQuestionId);
+        return updatedQuizzes;
+      });
+      
+      console.log(`🎯 All quizzes now use question ID ${data.newQuestionId} (real-time update)`);
+    };
+
+    socketService.onFreshQuestionCreated(handleFreshQuestion);
+    socketService.onQuizCompleted(handleQuizCompleted);
+    socketService.onQuestionIdUpdated(handleQuestionIdUpdate);
+
+    const loadBackendData = async () => {
       try {
         setLoading(true);
+        
+        // Load available quizzes from backend
+        const availableQuizzes = await loadAvailableQuizzes();
+        console.log('🎯 useBackendAPI useEffect: Setting quizzes to', availableQuizzes.length, 'items');
+        setQuizzes(availableQuizzes);
         
         // Load user's answered quizzes from backend
         const answeredResponse = await fetch(`${BACKEND_URL}/api/get-answered-quizzes`, {
@@ -65,6 +156,14 @@ export const useBackendAPI = (userAccount) => {
     };
 
     loadBackendData();
+
+    // Cleanup function
+    return () => {
+      // Remove event listeners when component unmounts or userAccount changes
+      socketService.off('freshQuestionCreated', handleFreshQuestion);
+      socketService.off('quizCompleted', handleQuizCompleted);
+      socketService.off('questionIdUpdated', handleQuestionIdUpdate);
+    };
   }, [userAccount]);
 
   // Fallback to localStorage
@@ -90,32 +189,6 @@ export const useBackendAPI = (userAccount) => {
     } catch (error) {
       console.error("Error loading local storage data:", error);
     }
-  };
-
-  // Load available quizzes from backend
-  const loadAvailableQuizzes = async () => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/get-available-quizzes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ userAccount })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          console.log("✅ Loaded quizzes from backend:", data.quizzes.length);
-          return data.quizzes;
-        }
-      } else {
-        console.error("Backend API not available, status:", response.status);
-      }
-    } catch (error) {
-      console.error("Error loading available quizzes:", error);
-    }
-    return [];
   };
 
   // Record answer in backend
@@ -180,8 +253,9 @@ export const useBackendAPI = (userAccount) => {
   };
 
   return {
+    quizzes,
     answeredQuizzes,
-    stats,
+    userStats: stats, // Rename stats to userStats for GamePage compatibility
     loading,
     loadAvailableQuizzes,
     recordAnswer,
@@ -189,6 +263,56 @@ export const useBackendAPI = (userAccount) => {
     resetStreak,
     // Export the function directly for GamePage to use
     setAnsweredQuizzes,
-    setStats
+    setStats,
+    // Add loadBackendData function for manual reload
+    loadBackendData: async () => {
+      if (!userAccount) return;
+      try {
+        setLoading(true);
+        
+        // Load available quizzes from backend
+        const availableQuizzes = await loadAvailableQuizzes();
+        console.log('🎯 useBackendAPI manual reload: Setting quizzes to', availableQuizzes.length, 'items');
+        setQuizzes(availableQuizzes);
+        
+        // Load user's answered quizzes from backend
+        const answeredResponse = await fetch(`${BACKEND_URL}/api/get-answered-quizzes`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userAccount })
+        });
+
+        if (answeredResponse.ok) {
+          const answeredData = await answeredResponse.json();
+          if (answeredData.success) {
+            setAnsweredQuizzes(answeredData.answeredQuizzes);
+            console.log("Reloaded answered quizzes:", answeredData.answeredQuizzes.length);
+          }
+        }
+
+        // Load user stats from backend
+        const statsResponse = await fetch(`${BACKEND_URL}/api/get-user-stats`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userAccount })
+        });
+
+        if (statsResponse.ok) {
+          const statsData = await statsResponse.json();
+          if (statsData.success) {
+            setStats(statsData.stats);
+            console.log("Reloaded user stats:", statsData.stats);
+          }
+        }
+      } catch (error) {
+        console.error("Error reloading data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
   };
 };

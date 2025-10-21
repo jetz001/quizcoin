@@ -1,0 +1,163 @@
+// This is your Prisma schema file for SQLite (easier testing)
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  username      String   @unique
+  passwordHash  String
+  displayName   String?
+  avatar        String?
+  walletAddress String?  @unique
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastLoginAt   DateTime?
+  isActive      Boolean  @default(true)
+  role          String   @default("user")
+  
+  // Game statistics
+  totalScore    Int      @default(0)
+  gamesPlayed   Int      @default(0)
+  questionsAnswered Int  @default(0)
+  correctAnswers Int     @default(0)
+  currentStreak Int      @default(0)
+  longestStreak Int      @default(0)
+  totalRewards  String   @default("0") // QZC tokens earned
+  
+  // Preferences
+  preferredCategories String? // JSON array
+  difficulty    Int      @default(1)
+  soundEnabled  Boolean  @default(true)
+  
+  // Relations
+  userAnswers   UserAnswer[]
+  achievements  UserAchievement[]
+  gameHistory   GameSession[]
+  
+  @@map("users")
+}
+
+model UserAchievement {
+  id          String   @id @default(cuid())
+  userId      String
+  achievement String   // Achievement type
+  unlockedAt  DateTime @default(now())
+  metadata    String?  // JSON data about the achievement
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, achievement])
+  @@map("user_achievements")
+}
+
+model GameSession {
+  id            String   @id @default(cuid())
+  userId        String
+  mode          String   // solo, pool, tournament
+  category      String?
+  difficulty    Int?
+  startedAt     DateTime @default(now())
+  completedAt   DateTime?
+  score         Int      @default(0)
+  questionsAnswered Int @default(0)
+  correctAnswers Int    @default(0)
+  timeSpent     Int?     // seconds
+  rewardEarned  String   @default("0")
+  status        String   @default("active") // active, completed, abandoned
+  
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("game_sessions")
+}
+
+model Question {
+  id            String   @id @default(cuid())
+  quizId        String   @unique
+  batchId       String?
+  question      String
+  options       String   // JSON string for SQLite
+  answerIndex   Int
+  correctAnswer String
+  difficulty    Int      @default(1)
+  mode          String   @default("solo")
+  category      String   @default("general")
+  createdAt     DateTime @default(now())
+  isAnswered    Boolean  @default(false)
+  totalAnswers  Int      @default(0)
+  correctAnswers Int     @default(0)
+  status        String   @default("active")
+  firstSolverAddress String?
+  firstCorrectAnswerTime DateTime?
+  
+  // Relations
+  userAnswers   UserAnswer[]
+  merkleLeaves  MerkleLeaf[]
+  
+  @@map("questions")
+}
+
+model MerkleLeaf {
+  id            String   @id @default(cuid())
+  batchId       Int
+  leaf          String
+  quizId        String
+  correctAnswer String
+  answerHash    String
+  createdAt     DateTime @default(now())
+  status        String   @default("active")
+  
+  // Relations
+  question      Question @relation(fields: [quizId], references: [quizId])
+  batch         MerkleBatch @relation(fields: [batchId], references: [batchId])
+  
+  @@map("merkle_leaves")
+}
+
+model MerkleBatch {
+  id            String   @id @default(cuid())
+  batchId       Int      @unique
+  totalQuestions Int
+  createdAt     DateTime @default(now())
+  status        String   @default("generating")
+  progress      Int      @default(0)
+  totalCreated  Int?
+  merkleRoot    String?
+  leaves        String   // JSON string for SQLite
+  quizIds       String   // JSON string for SQLite
+  readyAt       DateTime?
+  
+  // Relations
+  merkleLeaves  MerkleLeaf[]
+  
+  @@map("merkle_batches")
+}
+
+model UserAnswer {
+  id            String   @id @default(cuid())
+  quizId        String
+  userId        String?  // New: reference to User
+  userAccount   String   // Keep for backward compatibility
+  answer        String
+  isCorrect     Boolean
+  answeredAt    DateTime @default(now())
+  merkleProof   String?
+  txHash        String?
+  mode          String   @default("solo")
+  rewardAmount  String   @default("0")
+  timeSpent     Int?     // Time taken to answer in seconds
+  
+  // Relations
+  question      Question @relation(fields: [quizId], references: [quizId])
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@map("user_answers")
+}

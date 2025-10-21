@@ -4,6 +4,7 @@ import { MerkleTree } from 'merkletreejs';
 import { getDatabase, admin } from '../config/database.js';
 import { merkleContract } from '../config/blockchain.js';
 import { CONFIG } from '../config/constants.js';
+import { updateQuestionMerkleRoot } from './smartContractService.js';
 
 export const buildMerkleFromBatch = async (batchId) => {
   const db = getDatabase();
@@ -87,15 +88,27 @@ export const commitBatchOnChain = async (batchId, submitChunkSize = CONFIG.SUBMI
   }
 
   await db.collection('merkle_batches').doc(String(batchId)).update({ 
-    status: 'committed_onchain', 
     committedAt: admin.firestore.FieldValue.serverTimestamp(), 
     txs: txHashes 
   });
   console.log(`Batch ${batchId} committed successfully on-chain.`);
+  
+  // 🔄 AUTO-SYNC: Update question ID 1's Merkle root to match the new batch
+  // This fixes the architecture issue where manual updates were needed
+  try {
+    const syncResult = await updateQuestionMerkleRoot(batchId, rootHex, merkleContract, db);
+    if (syncResult.success) {
+      console.log(`✅ Auto-sync completed: Question ID 1 now has Merkle root from batch ${batchId}`);
+    } else {
+      console.warn(`⚠️ Auto-sync failed: ${syncResult.error}`);
+    }
+  } catch (syncError) {
+    console.warn(`⚠️ Auto-sync error (non-blocking):`, syncError.message);
+  }
+  
   return { root: rootHex, totalLeaves: leafHexes.length, onChain: true, txs: txHashes };
 };
 
-// Generate Merkle proof for a specific answer
 export const generateMerkleProof = async (quizId, answer, db) => {
   try {
     if (!db) {

@@ -23,7 +23,7 @@ export const storeQuestionToFirestore = async (quizId, quizData) => {
       question: quizData.question,
       options: quizData.options,
       answerIndex,
-      difficulty: Math.floor(Math.random() * 100),
+      difficulty: quizData.difficultyLevel || Math.floor(Math.random() * 100),
       mode: 'solo',
       category: quizData.category || 'general',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),

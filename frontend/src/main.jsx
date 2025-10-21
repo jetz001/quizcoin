@@ -1,16 +1,15 @@
 import React from "react";
 import { createRoot } from "react-dom/client"; // Correct import for createRoot
-import App from "./App";
+import AppOrganized from "./App-Organized";
 import "./index.css";
-// Import the Firebase configuration file to initialize the app
-import "./config/firebase"; 
+// Using organized backend instead of Firebase 
 
 const container = document.getElementById("root");
 if (container) {
   const root = createRoot(container);
   root.render(
     <React.StrictMode>
-      <App />
+      <AppOrganized />
     </React.StrictMode>
   );
 }

@@ -1,0 +1,10 @@
+{
+  "_format": "hh-sol-artifact-1",
+  "contractName": "LibQuizStorage",
+  "sourceName": "contracts/libraries/LibQuizStorage.sol",
+  "abi": [],
+  "bytecode": "0x60808060405234601757603a9081601d823930815050f35b600080fdfe600080fdfea26469706673582212205d1d47605834e7a5cbc9a91769d1be9f57d011d6425ab8182f41e92489c0a5ba64736f6c634300081c0033",
+  "deployedBytecode": "0x600080fdfea26469706673582212205d1d47605834e7a5cbc9a91769d1be9f57d011d6425ab8182f41e92489c0a5ba64736f6c634300081c0033",
+  "linkReferences": {},
+  "deployedLinkReferences": {}
+}

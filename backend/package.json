@@ -1,6 +1,24 @@
 {
   "name": "hardhat-project",
   "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "start:old": "node server-old.js",
+    "start:organized": "node src/core/server-organized.js",
+    "dev": "node server.js",
+    "dev:organized": "node src/core/server-organized.js",
+    "stop": "node scripts/maintenance/server-control.js stop",
+    "restart": "node scripts/maintenance/server-control.js restart",
+    "db:generate": "cd database && prisma generate",
+    "db:migrate": "cd database && prisma migrate dev",
+    "db:deploy": "cd database && prisma migrate deploy",
+    "db:studio": "cd database && prisma studio",
+    "db:setup": "npm run db:generate && npm run db:migrate && node scripts/setup/setup-fresh-db.js",
+    "db:fresh": "node scripts/setup/setup-fresh-db.js",
+    "quick-setup": "node quick-setup.js",
+    "blockchain:deploy": "cd blockchain && npx hardhat run scripts/deploy.cjs",
+    "blockchain:test": "cd blockchain && npx hardhat test"
+  },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^6.0.0",
     "@nomiclabs/hardhat-etherscan": "^3.1.8",
@@ -10,13 +28,19 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.3.0",
+    "@prisma/client": "^6.17.1",
+    "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "ethers": "^6.15.0",
     "express": "^5.1.0",
     "firebase-admin": "^13.5.0",
+    "jsonwebtoken": "^9.0.2",
     "keccak256": "^1.0.6",
     "merkletreejs": "^0.5.2",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "pg": "^8.16.3",
+    "prisma": "^6.17.1",
+    "socket.io": "^4.8.1"
   }
 }

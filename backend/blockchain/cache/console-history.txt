@@ -1,0 +1,3 @@
+await c.submitMerkleRoot(1, "0x...", [])
+const c = await ethers.getContractAt(abi, "0x6DDD5b880dc79A093B55573Fe788aF88dB8125ce");
+const abi = [ "function submitMerkleRoot(uint256,bytes32,bytes32[])" ];

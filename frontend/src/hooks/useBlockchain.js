@@ -2,24 +2,30 @@
 import { useState, useEffect, useCallback } from 'react';
 import { blockchainService } from '../utils/blockchain';
 
-// Helper function for blockchain error handling (inline)
 const handleBlockchainError = (error, context = '') => {
   console.error(`Blockchain error ${context}:`, error);
   
   if (error.code === 4001) {
     return 'ผู้ใช้ปฏิเสธการทำธุรกรรม';
+  } else if (error.message === 'QUESTION_CLOSED_BY_USER') {
+    return 'REFRESH_NEEDED_USER'; // Special code to trigger refresh
+  } else if (error.message === 'QUESTION_CLOSED_BY_OTHER') {
+    return 'REFRESH_NEEDED_OTHER'; // Special code to trigger refresh
   } else if (error.message.includes('insufficient funds')) {
     return 'BNB ไม่เพียงพอสำหรับค่า gas';
-  } else if (error.message.includes('network')) {
-    return 'เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย';
-  } else if (error.reason) {
-    return `Smart Contract Error: ${error.reason}`;
+  } else if (error.message.includes('Quiz already answered')) {
+    return 'คำถามนี้ตอบไปแล้ว';
+  } else if (error.message.includes('Invalid Merkle proof')) {
+    return 'Merkle proof ไม่ถูกต้อง';
+  } else if (error.message.includes('Question does not exist')) {
+    return 'คำถามนี้ไม่มีอยู่บน blockchain กรุณาเลือกคำถามอื่น';
+  } else if (error.message.includes('execution reverted')) {
+    return 'การทำธุรกรรมถูกยกเลิก อาจเป็นเพราะคำถามไม่มีอยู่หรือข้อมูลไม่ถูกต้อง';
   } else {
     return `เกิดข้อผิดพลาด: ${error.message}`;
   }
 };
-
-export const useBlockchain = () => {
+export const useBlockchain = (onQuizReloadNeeded = null) => {
   const [isConnected, setIsConnected] = useState(false);
   const [userAccount, setUserAccount] = useState(null);
   const [isCorrectNetwork, setIsCorrectNetwork] = useState(false);
@@ -131,13 +137,13 @@ export const useBlockchain = () => {
   }, []);
 
   // Submit answer with full flow
-  const submitAnswer = useCallback(async (quizId, answer, onProgress) => {
+  const submitAnswer = useCallback(async (quizId, answer, blockchainQuestionId, onProgress, quizData = null) => {
     try {
       setIsLoading(true);
       setError(null);
 
       if (!userAccount) {
-        throw new Error('Wallet not connected');
+        throw new Error('Please connect your wallet first');
       }
 
       if (!isCorrectNetwork) {
@@ -147,24 +153,32 @@ export const useBlockchain = () => {
       // Submit answer via blockchain service
       const result = await blockchainService.submitAnswer(
         quizId, 
-        answer, 
-        onProgress
+        answer,
+        blockchainQuestionId,
+        onProgress,
+        quizData
       );
 
-      // Record answer in backend if blockchain transaction successful
+      // Complete quiz in backend if blockchain transaction successful
       if (result.success) {
         try {
-          await blockchainService.recordAnswer({
+          await blockchainService.completeQuiz({
             userAccount,
             quizId,
             answer,
             correct: true,
-            mode: 'solo', // This should come from props
             rewardAmount: result.rewardInfo.totalReward,
-            txHash: result.txHash
+            txHash: result.txHash,
+            quizData: {
+              question: result.quizData?.question || "Question not available",
+              options: result.quizData?.options || [],
+              category: result.quizData?.category || "general",
+              difficulty: result.quizData?.difficulty || 50
+            }
           });
+          console.log(`✅ Quiz ${quizId} completed and moved to completed_quizzes collection`);
         } catch (recordError) {
-          console.warn('Failed to record answer in backend:', recordError);
+          console.warn('Failed to complete quiz in backend:', recordError);
           // Don't throw here as blockchain transaction was successful
         }
 
@@ -175,6 +189,15 @@ export const useBlockchain = () => {
       return result;
     } catch (error) {
       console.error('Failed to submit answer:', error);
+      
+      // If fresh question was created, trigger reload
+      if (error.message.includes('คำถามใหม่ถูกสร้างแล้ว') && onQuizReloadNeeded) {
+        console.log('🔄 Triggering quiz reload after fresh question creation...');
+        setTimeout(() => {
+          onQuizReloadNeeded();
+        }, 2000); // Wait 2 seconds for blockchain confirmation
+      }
+      
       const errorMessage = handleBlockchainError(error, 'during answer submission');
       setError(errorMessage);
       throw new Error(errorMessage);

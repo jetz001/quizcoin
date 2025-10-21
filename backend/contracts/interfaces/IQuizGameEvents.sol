@@ -14,4 +14,8 @@ interface IQuizGameEvents {
     event PlayerJoinedQuiz(address indexed player, uint256 indexed quizId);
     event QuizAnswerSubmitted(address indexed player, uint256 indexed quizId, uint256 indexed questionIndex, uint8 submittedAnswerIndex, bool isCorrect);
     event QuizCreated(address indexed creator, uint256 indexed quizId, uint256 rewardAmount, uint256 totalQuestions);
+    
+    // 🚪 Leaf-Level Door System Events
+    event LeafSolved(uint256 indexed questionId, bytes32 indexed answerLeaf, address indexed solver, uint256 rewardAmount);
+    event LeafRegistered(uint256 indexed questionId, bytes32 indexed answerLeaf);
 }

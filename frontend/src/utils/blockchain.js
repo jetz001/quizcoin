@@ -6,7 +6,6 @@ export const NETWORKS = {
   BNB_TESTNET: {
     chainId: '0x61',
     chainName: 'BNB Smart Chain Testnet',
-    nativeCurrency: { name: 'BNB', symbol: 'BNB', decimals: 18 },
     rpcUrls: ['https://data-seed-prebsc-1-s1.binance.org:8545/'],
     blockExplorerUrls: ['https://testnet.bscscan.com/'],
   }
@@ -15,14 +14,14 @@ export const NETWORKS = {
 const QUIZ_DIAMOND_ABI = [
   {
     "inputs": [
-    { "internalType": "uint256", "name": "quizId", "type": "uint256" },
-    { "internalType": "bytes32", "name": "leaf", "type": "bytes32" },
-    { "internalType": "bytes32[]", "name": "proof", "type": "bytes32[]" }
-  ],
+      { "internalType": "uint256", "name": "quizId", "type": "uint256" },
+      { "internalType": "bytes32", "name": "leaf", "type": "bytes32" },
+      { "internalType": "bytes32[]", "name": "proof", "type": "bytes32[]" }
+    ],
     "name": "verifyQuiz",
-  "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
-  "stateMutability": "view",
-  "type": "function"
+    "outputs": [{ "internalType": "bool", "name": "", "type": "bool" }],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [
@@ -33,6 +32,71 @@ const QUIZ_DIAMOND_ABI = [
     "name": "submitAnswer",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "_questionId", "type": "uint256" }
+    ],
+    "name": "getQuestion",
+    "outputs": [
+      { "internalType": "bytes32", "name": "correctAnswerHash", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "hintHash", "type": "bytes32" },
+      { "internalType": "address", "name": "questionCreator", "type": "address" },
+      { "internalType": "uint256", "name": "difficultyLevel", "type": "uint256" },
+      { "internalType": "uint256", "name": "baseRewardAmount", "type": "uint256" },
+      { "internalType": "bool", "name": "isClosed", "type": "bool" },
+      { "internalType": "uint8", "name": "mode", "type": "uint8" },
+      { "internalType": "uint256", "name": "blockCreationTime", "type": "uint256" },
+      { "internalType": "uint256", "name": "firstCorrectAnswerTime", "type": "uint256" },
+      { "internalType": "address", "name": "firstSolverAddress", "type": "address" },
+      { "internalType": "address[]", "name": "poolCorrectSolvers", "type": "address[]" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "_answerLeaf", "type": "bytes32" }
+    ],
+    "name": "isLeafSolved",
+    "outputs": [
+      { "internalType": "bool", "name": "", "type": "bool" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "_answerLeaf", "type": "bytes32" }
+    ],
+    "name": "getLeafSolver",
+    "outputs": [
+      { "internalType": "address", "name": "", "type": "address" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "_answerLeaf", "type": "bytes32" }
+    ],
+    "name": "getLeafSolveTime",
+    "outputs": [
+      { "internalType": "uint256", "name": "", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "_answerLeaf", "type": "bytes32" }
+    ],
+    "name": "getLeafQuestionId",
+    "outputs": [
+      { "internalType": "uint256", "name": "", "type": "uint256" }
+    ],
+    "stateMutability": "view",
     "type": "function"
   }
 ];
@@ -146,12 +210,17 @@ export class BlockchainService {
 
   async getQZCBalance(address) {
     try {
+      if (!this.quizCoinContract) {
+        console.warn('QuizCoin contract not initialized');
+        return "0.00";
+      }
+      
       const balance = await this.quizCoinContract.balanceOf(address);
       const decimals = await this.quizCoinContract.decimals();
       const formattedBalance = ethers.formatUnits(balance, decimals);
       return parseFloat(formattedBalance).toFixed(2);
     } catch (error) {
-      console.error('Error getting QZC balance:', error);
+      console.warn('QZC balance not available (contract may not be deployed):', error.message);
       return "0.00";
     }
   }
@@ -202,15 +271,18 @@ export class BlockchainService {
   }
 
   // Verify Merkle proof on-chain
-  async verifyMerkleProof(quizId, leaf, proof) {
+  async verifyMerkleProof(blockchainQuestionId, leaf, proof) {
   try {
     if (!this.quizDiamondContract) {
       throw new Error('Quiz contract not initialized');
     }
 
-    console.log('🔍 Verifying proof on-chain:', { quizId, leaf, proofLength: proof.length });
+    // Use the actual blockchain question ID
+    const questionId = blockchainQuestionId;
     
-    const isValid = await this.quizDiamondContract.verifyQuiz(quizId, leaf, proof);
+    console.log('🔍 Verifying proof on-chain:', { questionId, leaf, proofLength: proof.length });
+    
+    const isValid = await this.quizDiamondContract.verifyQuiz(questionId, leaf, proof);
     
     console.log('✅ On-chain verification result:', isValid);
     return isValid;
@@ -220,11 +292,52 @@ export class BlockchainService {
   }
 }
 
-  // Submit answer with real Merkle proof
-  async submitAnswer(quizId, answer, onProgress) {
+  // Submit answer with real Merkle proof (with retry logic)
+  async submitAnswer(quizId, answer, blockchainQuestionId, onProgress, quizData = null) {
+    const maxRetries = 2;
+    let retryCount = 0;
+    
+    while (retryCount <= maxRetries) {
+      try {
+        const result = await this._submitAnswerInternal(quizId, answer, blockchainQuestionId, onProgress, quizData);
+        
+        // If result indicates we should retry, increment counter and try again
+        if (result && result.shouldRetry && retryCount < maxRetries) {
+          retryCount++;
+          console.log(`🔄 Retrying submission (attempt ${retryCount + 1}/${maxRetries + 1})...`);
+          if (onProgress) onProgress(`🔄 กำลังลองใหม่ครั้งที่ ${retryCount + 1}...`);
+          continue;
+        }
+        
+        return result;
+      } catch (error) {
+        if (retryCount < maxRetries && error.message.includes('คำถามใหม่ถูกสร้างแล้ว')) {
+          retryCount++;
+          console.log(`🔄 Retrying after fresh question creation (attempt ${retryCount + 1}/${maxRetries + 1})...`);
+          if (onProgress) onProgress(`🔄 กำลังลองใหม่ครั้งที่ ${retryCount + 1}...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  // Internal submit answer method
+  async _submitAnswerInternal(quizId, answer, blockchainQuestionId, onProgress, quizData = null) {
     try {
       if (!this.signer) {
         throw new Error('No signer available');
+      }
+
+      // Validate blockchainQuestionId
+      if (!blockchainQuestionId) {
+        throw new Error('คำถามนี้ยังไม่ได้สร้างบน blockchain กรุณาเลือกคำถามอื่น');
+      }
+
+      // Additional validation
+      if (typeof blockchainQuestionId !== 'number' || blockchainQuestionId <= 0) {
+        throw new Error('รหัสคำถามบน blockchain ไม่ถูกต้อง');
       }
 
       // Step 1: Generate Merkle proof from backend
@@ -237,6 +350,7 @@ export class BlockchainService {
 
       console.log('📋 Proof data:', {
         quizId,
+        blockchainQuestionId,
         leaf: proofData.leaf,
         proofLength: proofData.proof.length,
         root: proofData.root,
@@ -246,7 +360,7 @@ export class BlockchainService {
       // Step 2: Verify proof on-chain (optional check)
       if (onProgress) onProgress('⚡ กำลังตรวจสอบด้วย Merkle Tree...');
       try {
-        const isValidOnChain = await this.verifyMerkleProof(proofData.batchId, proofData.leaf, proofData.proof);
+        const isValidOnChain = await this.verifyMerkleProof(blockchainQuestionId, proofData.leaf, proofData.proof);
 
         console.log('🔍 On-chain verification:', isValidOnChain);
         
@@ -257,15 +371,16 @@ export class BlockchainService {
         console.warn('⚠️ On-chain verification error:', verifyError.message);
       }
 
-      // Step 3: Extract questionId from quizId
-      const questionIdMatch = quizId.match(/q_(\d+)_(\d+)/);
-      const questionId = questionIdMatch ? questionIdMatch[1] : Date.now().toString();
+      // Step 3: Use the blockchain question ID from the quiz data
+      const questionId = blockchainQuestionId;
 
       if (onProgress) onProgress('📝 กำลังส่งคำตอบไปยัง blockchain...');
 
       // Step 4: Submit answer to blockchain
       const contractWithSigner = this.quizDiamondContract.connect(this.signer);
       
+      // Note: Removed question status check - using off-chain quiz completion tracking instead
+
       // Estimate gas first
       let gasEstimate;
       try {
@@ -277,7 +392,61 @@ export class BlockchainService {
         console.log('⛽ Gas estimate:', gasEstimate.toString());
       } catch (gasError) {
         console.warn('⚠️ Gas estimation failed:', gasError.message);
-        gasEstimate = 300000; // Fallback gas limit
+        
+        // Handle specific case of already solved quiz
+        if (gasError.message.includes('already solved')) {
+          console.log('⚠️ Quiz already solved on blockchain');
+          if (onProgress) onProgress('⚠️ คำถามนี้ถูกทำไปแล้ว');
+          
+          // Sync the completion status with Firebase
+          try {
+            const userAccount = await this.signer.getAddress();
+            await this.syncQuizCompletion(userAccount, quizId, 'blockchain_already_solved');
+          } catch (syncError) {
+            console.warn('⚠️ Failed to sync quiz completion:', syncError);
+          }
+          
+          // Return a special object to indicate this quiz should be marked as completed
+          return {
+            success: false,
+            alreadySolved: true,
+            message: 'คำถามนี้ถูกทำไปแล้วบน blockchain',
+            quizId: quizId
+          };
+        }
+        
+        // If gas estimation fails due to closed question, try to create fresh question
+        if (gasError.message.includes('Question is closed') || gasError.message.includes('already closed')) {
+          console.log('🔄 Question is closed, attempting to create fresh question...');
+          if (onProgress) onProgress('🔄 คำถามถูกปิด กำลังสร้างคำถามใหม่...');
+          
+          try {
+            // Extract batch ID from proof data
+            const batchId = proofData.batchId;
+            if (batchId) {
+              await this.createFreshQuestion(batchId);
+              
+              // Wait for real-time update and then retry automatically
+              console.log('✅ Fresh question creation initiated, waiting for real-time update...');
+              if (onProgress) onProgress('✅ คำถามใหม่ถูกสร้างแล้ว กำลังอัพเดท...');
+              
+              // Give the real-time system time to update
+              await new Promise(resolve => setTimeout(resolve, 3000));
+              
+              // Instead of throwing error, return a special flag to retry
+              return { shouldRetry: true, message: 'Fresh question created, retrying...' };
+            } else {
+              throw new Error('ไม่สามารถสร้างคำถามใหม่ได้ กรุณารีเฟรชหน้า');
+            }
+          } catch (freshError) {
+            console.error('❌ Failed to create fresh question:', freshError);
+            throw new Error('คำถามใหม่ถูกสร้างแล้ว ระบบจะอัพเดทอัตโนมัติในไม่ช้า');
+          }
+        }
+        
+        // Use fallback gas limit for other estimation failures
+        gasEstimate = 350000; // Increased fallback gas limit
+        console.log('⛽ Using fallback gas estimate:', gasEstimate);
       }
 
       // Submit transaction
@@ -333,6 +502,12 @@ export class BlockchainService {
           proof: proofData.proof,
           root: proofData.root,
           batchId: proofData.batchId
+        },
+        quizData: quizData || {
+          question: "Question not available",
+          options: [],
+          category: "general",
+          difficulty: 50
         }
       };
 
@@ -348,24 +523,61 @@ export class BlockchainService {
         throw new Error('คำถามนี้ตอบไปแล้ว');
       } else if (error.message.includes('Invalid Merkle proof')) {
         throw new Error('Merkle proof ไม่ถูกต้อง');
+      } else if (error.message.includes('Question does not exist')) {
+        throw new Error('คำถามนี้ไม่มีอยู่บน blockchain กรุณาเลือกคำถามอื่น');
+      } else if (error.message.includes('execution reverted')) {
+        throw new Error('การทำธุรกรรมถูกยกเลิก อาจเป็นเพราะคำถามไม่มีอยู่หรือข้อมูลไม่ถูกต้อง');
       } else {
         throw new Error(`เกิดข้อผิดพลาด: ${error.message}`);
       }
     }
   }
 
-  async recordAnswer(answerData) {
+  // Complete quiz in backend
+  async completeQuiz(completionData) {
     try {
-      const response = await fetch('http://localhost:3001/api/record-answer', {
+      const response = await fetch('http://localhost:3001/api/complete-quiz', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(answerData),
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(completionData)
       });
-      const data = await response.json();
-      if (!data.success) throw new Error(data.error || 'Failed to record answer');
-      return data;
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Quiz completed in backend:', result);
+      return result;
     } catch (error) {
-      console.error('Error recording answer:', error);
+      console.error('❌ Error completing quiz in backend:', error);
+      throw error;
+    }
+  }
+
+  // Create fresh question when current one is closed
+  async createFreshQuestion(batchId) {
+    try {
+      console.log(`🔄 Creating fresh question for batch ${batchId}...`);
+      
+      const response = await fetch(`http://localhost:3001/admin/create-fresh-question/${batchId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('✅ Fresh question created:', result);
+      return result;
+    } catch (error) {
+      console.error('❌ Error creating fresh question:', error);
       throw error;
     }
   }
@@ -418,6 +630,171 @@ export class BlockchainService {
     this.quizDiamondContract = null;
     this.quizCoinContract = null;
     console.log('🔌 Blockchain service disconnected');
+  }
+
+  // 🚪 NEW: Leaf-Level Door System Methods
+  
+  async isLeafSolved(answerLeaf) {
+    if (!this.quizDiamondContract) {
+      throw new Error('Contract not initialized');
+    }
+
+    try {
+      const isSolved = await this.quizDiamondContract.isLeafSolved(answerLeaf);
+      console.log(`🚪 Leaf ${answerLeaf} solved status:`, isSolved);
+      return isSolved;
+    } catch (error) {
+      console.error('❌ Error checking leaf status:', error);
+      return false;
+    }
+  }
+
+  async getLeafInfo(answerLeaf) {
+    if (!this.quizDiamondContract) {
+      throw new Error('Contract not initialized');
+    }
+
+    try {
+      const [isSolved, solver, solveTime, questionId] = await Promise.all([
+        this.quizDiamondContract.isLeafSolved(answerLeaf),
+        this.quizDiamondContract.getLeafSolver(answerLeaf),
+        this.quizDiamondContract.getLeafSolveTime(answerLeaf),
+        this.quizDiamondContract.getLeafQuestionId(answerLeaf)
+      ]);
+
+      return {
+        isSolved,
+        solver,
+        solveTime: solveTime.toString(),
+        questionId: questionId.toString()
+      };
+    } catch (error) {
+      console.error('❌ Error getting leaf info:', error);
+      return null;
+    }
+  }
+
+  async checkQuizAvailability(quizId, answerLeaf) {
+    try {
+      const isSolved = await this.isLeafSolved(answerLeaf);
+      console.log(`🎯 Quiz ${quizId} availability:`, !isSolved);
+      return !isSolved; // Available if not solved
+    } catch (error) {
+      console.error('❌ Error checking quiz availability:', error);
+      return true; // Default to available on error
+    }
+  }
+
+  async checkQuizCompleted(userAccount, quizId) {
+    try {
+      console.log(`🔍 Checking if quiz ${quizId} completed by ${userAccount}`);
+      
+      // First check database for completion status
+      const response = await fetch('http://localhost:3001/api/check-quiz-completed', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userAccount: userAccount.toLowerCase(),
+          quizId
+        })
+      });
+
+      if (!response.ok) {
+        console.error(`❌ API request failed with status ${response.status}`);
+        return { isCompleted: false, completedData: null };
+      }
+
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log(`✅ Quiz completion check result:`, data.isCompleted);
+        return {
+          isCompleted: data.isCompleted,
+          completedData: data.completedData
+        };
+      } else {
+        console.error('❌ Failed to check quiz completion:', data.error);
+        return { isCompleted: false, completedData: null };
+      }
+    } catch (error) {
+      console.error('❌ Error checking quiz completion:', error);
+      return { isCompleted: false, completedData: null };
+    }
+  }
+
+  async checkQuizCompletedByLeaf(quizId, correctAnswer) {
+    try {
+      console.log(`🔍 Checking if quiz ${quizId} completed by leaf (answer: ${correctAnswer})`);
+      
+      // Generate the answer leaf hash
+      const answerLeaf = ethers.keccak256(ethers.toUtf8Bytes(correctAnswer.toLowerCase().trim()));
+      console.log(`🍃 Answer leaf hash: ${answerLeaf}`);
+      
+      // Check if this specific leaf is solved on blockchain
+      const isSolved = await this.isLeafSolved(answerLeaf);
+      console.log(`🚪 Leaf solved status: ${isSolved}`);
+      
+      if (isSolved) {
+        // Get additional info about who solved it and when
+        const leafInfo = await this.getLeafInfo(answerLeaf);
+        console.log(`📋 Leaf info:`, leafInfo);
+        
+        return {
+          isCompleted: true,
+          completedData: {
+            solver: leafInfo.solver,
+            solveTime: leafInfo.solveTime,
+            questionId: leafInfo.questionId,
+            answerLeaf: answerLeaf,
+            method: 'leaf_check'
+          }
+        };
+      }
+      
+      return { isCompleted: false, completedData: null };
+      
+    } catch (error) {
+      console.error('❌ Error checking quiz completion by leaf:', error);
+      return { isCompleted: false, completedData: null };
+    }
+  }
+
+  async syncQuizCompletion(userAccount, quizId, reason) {
+    try {
+      console.log(`🔄 Syncing quiz completion: ${quizId} for ${userAccount}`);
+      
+      const response = await fetch('http://localhost:3001/api/sync-quiz-completion', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userAccount: userAccount.toLowerCase(),
+          quizId,
+          reason
+        })
+      });
+
+      if (!response.ok) {
+        console.error(`❌ Sync API request failed with status ${response.status}`);
+        return false;
+      }
+
+      const data = await response.json();
+      
+      if (data.success) {
+        console.log(`✅ Quiz completion synced:`, data.synced ? 'newly synced' : 'already existed');
+        return true;
+      } else {
+        console.error('❌ Failed to sync quiz completion:', data.error);
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Error syncing quiz completion:', error);
+      return false;
+    }
   }
 }
 

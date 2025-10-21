@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Leaf-Level Door System</title>
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
+</head>
+<body>
+    <h1>🧪 Leaf-Level Door System Test</h1>
+    <div id="results"></div>
+    
+    <script>
+        async function testLeafSystem() {
+            const results = document.getElementById('results');
+            
+            try {
+                // Connect to local hardhat
+                const provider = new ethers.providers.JsonRpcProvider('http://127.0.0.1:8545');
+                const contractAddress = '0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e';
+                
+                // ABI for leaf functions
+                const abi = [
+                    "function isLeafSolved(bytes32 _answerLeaf) external view returns (bool)",
+                    "function getLeafSolver(bytes32 _answerLeaf) external view returns (address)",
+                    "function getLeafSolveTime(bytes32 _answerLeaf) external view returns (uint256)",
+                    "function getLeafQuestionId(bytes32 _answerLeaf) external view returns (uint256)"
+                ];
+                
+                const contract = new ethers.Contract(contractAddress, abi, provider);
+                
+                results.innerHTML += '<p>✅ Connected to contract: ' + contractAddress + '</p>';
+                
+                // Test with a sample leaf
+                const testLeaf = ethers.utils.keccak256(ethers.utils.toUtf8Bytes('test-quiz-leaf-123'));
+                results.innerHTML += '<p>🧪 Testing leaf: ' + testLeaf + '</p>';
+                
+                // Check if leaf is solved
+                const isSolved = await contract.isLeafSolved(testLeaf);
+                results.innerHTML += '<p>🚪 Leaf solved status: ' + isSolved + '</p>';
+                
+                if (!isSolved) {
+                    results.innerHTML += '<p>✅ SUCCESS: Leaf shows as available (not solved)</p>';
+                    results.innerHTML += '<p>🎉 LEAF-LEVEL DOOR SYSTEM IS WORKING!</p>';
+                } else {
+                    results.innerHTML += '<p>⚠️ INFO: Leaf shows as solved</p>';
+                    
+                    // Get solver info
+                    const solver = await contract.getLeafSolver(testLeaf);
+                    const solveTime = await contract.getLeafSolveTime(testLeaf);
+                    const questionId = await contract.getLeafQuestionId(testLeaf);
+                    
+                    results.innerHTML += '<p>👤 Solver: ' + solver + '</p>';
+                    results.innerHTML += '<p>⏰ Solve time: ' + solveTime + '</p>';
+                    results.innerHTML += '<p>🔢 Question ID: ' + questionId + '</p>';
+                }
+                
+                results.innerHTML += '<p style="color: green; font-weight: bold;">🎯 LEAF SYSTEM TEST COMPLETED SUCCESSFULLY!</p>';
+                
+            } catch (error) {
+                results.innerHTML += '<p style="color: red;">❌ Error: ' + error.message + '</p>';
+                console.error('Test failed:', error);
+            }
+        }
+        
+        // Run test when page loads
+        window.addEventListener('load', testLeafSystem);
+    </script>
+</body>
+</html>

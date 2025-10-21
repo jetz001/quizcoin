@@ -61,27 +61,76 @@ router.post('/commit-batch', async (req, res) => {
   }
 });
 
-// Generate and commit endpoint
-router.post('/generate-and-commit', async (req, res) => {
+// Create questions on blockchain endpoint
+router.post('/create-questions-onchain', async (req, res) => {
   try {
-    const { db, merkleContract } = req.app.locals;
-    
-    console.log(`🚀 Starting full batch process...`);
-    
-    // Generate batch first
-    const generationResult = await generateBatch(db);
-    console.log(`✅ Batch ${generationResult.batchId} generated`);
-    
-    // Then commit to blockchain  
-    const commitResult = await commitBatchOnChain(generationResult.batchId, db, merkleContract);
-    
-    res.status(200).json({ 
-      success: true, 
-      ...commitResult, 
-      generationResult 
+    const { batchId } = req.body;
+    const { db, blockchain } = req.app.locals;
+
+    if (!batchId) {
+      return res.status(400).json({ success: false, error: "batchId is required" });
+    }
+
+    if (!blockchain || !blockchain.isConnected()) {
+      return res.status(503).json({ success: false, error: "Blockchain not connected" });
+    }
+
+    console.log(`🔨 Creating questions on-chain for batch ${batchId}...`);
+
+    // Get all leaves for this batch
+    const leavesQuery = await db.collection('merkle_leaves')
+      .where('batchId', '==', batchId)
+      .get();
+
+    if (leavesQuery.empty) {
+      return res.status(404).json({ success: false, error: "No leaves found for this batch" });
+    }
+
+    const questions = leavesQuery.docs.map(doc => ({
+      ...doc.data(),
+      docId: doc.id
+    }));
+
+    console.log(`📋 Found ${questions.length} questions to create on-chain`);
+
+    // Create questions on blockchain
+    const results = await blockchain.createQuestionsInBatch(questions, 5, 2000);
+
+    // Update Firestore with blockchain questionIds
+    const batch = db.batch();
+    let successCount = 0;
+
+    results.forEach((result, index) => {
+      if (result.success) {
+        const docRef = db.collection('merkle_leaves').doc(questions[index].docId);
+        batch.update(docRef, {
+          blockchainQuestionId: index + 1, // questionId starts from 1 and increments
+          createdOnChain: true,
+          txHash: result.txHash
+        });
+        successCount++;
+      }
     });
+
+    await batch.commit();
+
+    // Update batch status
+    await db.collection('merkle_batches').doc(String(batchId)).update({
+      questionsCreatedOnChain: true,
+      onChainQuestionCount: successCount,
+      createdOnChainAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    res.status(200).json({
+      success: true,
+      batchId,
+      totalQuestions: questions.length,
+      successfullyCreated: successCount,
+      results
+    });
+
   } catch (error) {
-    console.error("❌ Error in /admin/generate-and-commit:", error);
+    console.error("❌ Error creating questions on-chain:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

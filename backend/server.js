@@ -4,14 +4,17 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 
 // Import routes
 import adminRoutes from './routes/adminRoutes.js';
 import apiRoutes from './routes/apiRoutes.js';
 import merkleRoutes from './routes/merkleRoutes.js';
+import dataRoutes from './routes/dataRoutes.js';
 
 // Import services
-import { initializeFirebase } from './services/firebase.js';
+import { initializeDatabase, disconnectDatabase } from './services/database.js';
 import { initializeBlockchain } from './services/blockchain.js';
 
 // Load environment variables
@@ -33,8 +36,8 @@ const startServer = async () => {
   try {
     console.log('🚀 Starting QuizCoin Backend...');
     
-    // Initialize Firebase
-    const db = await initializeFirebase();
+    // Initialize Database
+    const db = await initializeDatabase();
     
     // Initialize Blockchain
     const blockchain = await initializeBlockchain();
@@ -46,7 +49,9 @@ const startServer = async () => {
     // Routes
     app.use('/admin', adminRoutes);
     app.use('/api', apiRoutes);
-    app.use('/api', merkleRoutes);
+    app.use('/merkle', merkleRoutes);
+    app.use('/data', dataRoutes);
+    
     
     // Health check
     app.get('/', (req, res) => {
@@ -55,7 +60,7 @@ const startServer = async () => {
         status: 'running',
         timestamp: new Date().toISOString(),
         services: {
-          firebase: !!db,
+          database: !!db,
           blockchain: !!blockchain.merkleContract
         }
       });
@@ -80,23 +85,73 @@ const startServer = async () => {
       });
     });
     
+    // Create HTTP server and Socket.IO
+    const server = createServer(app);
+    const io = new SocketIOServer(server, {
+      cors: {
+        origin: ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+        methods: ["GET", "POST"]
+      }
+    });
+
+    // Make Socket.IO available to routes
+    app.locals.io = io;
+
+    // Socket.IO connection handling
+    io.on('connection', (socket) => {
+      console.log('🔌 Client connected:', socket.id);
+      
+      socket.on('disconnect', () => {
+        console.log('🔌 Client disconnected:', socket.id);
+      });
+    });
+
     // Start server
-    const server = app.listen(PORT, () => {
+    server.listen(PORT, () => {
       console.log(`🚀 Server listening on ${PORT}`);
       console.log(`🌐 Admin dashboard: http://localhost:${PORT}/admin`);
+      console.log(`🔌 Socket.IO ready for real-time updates`);
     });
     
-    // Graceful shutdown
-    const gracefulShutdown = () => {
-      console.log('🛑 Shutting down gracefully...');
-      server.close(() => {
-        console.log('✅ Server closed');
-        process.exit(0);
+    // Graceful shutdown with proper cleanup
+    let isShuttingDown = false;
+    
+    const gracefulShutdown = (signal) => {
+      if (isShuttingDown) {
+        console.log('🛑 Shutdown already in progress...');
+        return;
+      }
+      
+      isShuttingDown = true;
+      console.log(`🛑 Received ${signal}. Shutting down gracefully...`);
+      
+      // Close Socket.IO connections
+      io.close(() => {
+        console.log('✅ Socket.IO closed');
+        
+        // Close database connection
+        disconnectDatabase().then(() => {
+          // Close HTTP server
+          server.close(() => {
+            console.log('✅ Server closed');
+            process.exit(0);
+          });
+        });
       });
+      
+      // Force exit after 10 seconds if graceful shutdown fails
+      setTimeout(() => {
+        console.log('⚠️ Forcing shutdown after timeout');
+        process.exit(1);
+      }, 10000);
     };
     
-    process.on('SIGTERM', gracefulShutdown);
-    process.on('SIGINT', gracefulShutdown);
+    // Set max listeners to prevent warning
+    process.setMaxListeners(20);
+    
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGQUIT', () => gracefulShutdown('SIGQUIT'));
     
   } catch (error) {
     console.error('❌ Failed to start server:', error);

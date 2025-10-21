@@ -43,6 +43,12 @@ library LibAppStorage {
         mapping(uint256 => mapping(address => PlayerParticipation)) quizParticipations;
         mapping(uint256 => address[]) quizPlayers;
         
+        // 🚪 Leaf-Level Door System
+        mapping(bytes32 => bool) leafSolved;        // Individual door for each quiz leaf
+        mapping(bytes32 => address) leafSolver;     // Who solved each leaf
+        mapping(bytes32 => uint256) leafSolveTime;  // When each leaf was solved
+        mapping(bytes32 => uint256) leafQuestionId; // Which question each leaf belongs to
+        
         IPoolManager poolManager;
         IQuizCoin quizCoin;
     }

@@ -16,6 +16,7 @@ function App() {
   const [currentPage, setCurrentPage] = useState('home');
   const [selectedMode, setSelectedMode] = useState(null); // 'solo' or 'pool'
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [qzcBalance, setQzcBalance] = useState('0');
 
   // Firebase Auth
   useEffect(() => {
@@ -40,24 +41,69 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch quizzes from Firestore
+  // Fetch quizzes from backend API (includes blockchainQuestionId)
   useEffect(() => {
-    if (!isAuthReady) return;
+    if (!isAuthReady || !userAccount) return;
     
-    const q = collection(db, "questions");
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const quizData = querySnapshot.docs.map(doc => ({
-        ...doc.data(),
-        quizId: doc.id
-      }));
-      console.log("📊 Loaded quizzes:", quizData.length);
-      setQuizzes(quizData);
-    }, (error) => {
-      console.error("Error fetching quizzes:", error);
-    });
+    const loadQuizzesFromBackend = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/get-available-quizzes', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userAccount })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            console.log("📊 Loaded quizzes from backend API:", data.quizzes.length);
+            setQuizzes(data.quizzes);
+          } else {
+            console.error("Backend API error:", data.error);
+            // Fallback to Firestore if backend fails
+            loadQuizzesFromFirestore();
+          }
+        } else {
+          console.error("Backend API not available, falling back to Firestore");
+          loadQuizzesFromFirestore();
+        }
+      } catch (error) {
+        console.error("Error fetching quizzes from backend:", error);
+        // Fallback to Firestore if backend fails
+        loadQuizzesFromFirestore();
+      }
+    };
+
+    const loadQuizzesFromFirestore = () => {
+      console.log("📊 Loading quizzes from Firestore (fallback)");
+      const q = collection(db, "questions");
+      const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const quizData = querySnapshot.docs.map(doc => ({
+          ...doc.data(),
+          quizId: doc.id
+          // Note: These won't have blockchainQuestionId
+        }));
+        console.log("📊 Loaded quizzes from Firestore:", quizData.length);
+        setQuizzes(quizData);
+      }, (error) => {
+        console.error("Error fetching quizzes from Firestore:", error);
+      });
+      
+      return unsubscribe;
+    };
+
+    // Load quizzes from backend API first
+    loadQuizzesFromBackend();
     
-    return () => unsubscribe();
-  }, [isAuthReady]);
+    // Set up periodic refresh every 30 seconds
+    const interval = setInterval(loadQuizzesFromBackend, 30000);
+    
+    return () => {
+      clearInterval(interval);
+    };
+  }, [isAuthReady, userAccount]);
 
   const connectWallet = async () => {
     if (window.ethereum) {
@@ -146,6 +192,8 @@ function App() {
           db={db}
           userAccount={userAccount}
           selectedMode={selectedMode}
+          qzcBalance={qzcBalance}
+          setQzcBalance={setQzcBalance}
         />
       )}
     </div>

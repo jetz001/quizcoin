@@ -73,7 +73,7 @@ contract QuizGameModeFacet is IQuizGameEvents {
         emit QuestionCreated(questionId, msg.sender, _difficultyLevel, calculatedBaseReward);
     }
 
-    /// @notice ผู้เล่นส่งคำตอบ + Merkle proof
+    /// @notice 🚪 NEW: ผู้เล่นส่งคำตอบ + Merkle proof (Leaf-Level Door System)
     function submitAnswer(
         uint256 _questionId,
         bytes32 _answerLeaf,
@@ -82,9 +82,13 @@ contract QuizGameModeFacet is IQuizGameEvents {
         LibAppStorage.AppStorage storage ds = _appStorage();
         Question storage question = ds.questions[_questionId];
 
+        // Basic validations
         require(question.correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
-        require(!question.isClosed, "Quiz: Question is closed.");
+        
+        // 🚪 NEW: Check individual leaf door instead of main door
+        require(!ds.leafSolved[_answerLeaf], "Quiz: This specific quiz already solved.");
 
+        // Level 100 expiry check
         if (question.difficultyLevel == 100) {
             require(block.timestamp <= question.blockCreationTime + ds.LEVEL_100_QUESTION_VALIDITY_SECONDS,
                 "Quiz: Level 100 expired.");
@@ -92,9 +96,9 @@ contract QuizGameModeFacet is IQuizGameEvents {
 
         // ✅ Verify with Merkle proof
         bool isCorrect = IMerkleFacet(address(this)).verifyQuiz(_questionId, _answerLeaf, _merkleProof);
-
         require(isCorrect, "Quiz: Wrong answer or invalid proof");
 
+        // Daily play restrictions (keep existing logic)
         uint256 currentDayId = block.timestamp / (24 * 60 * 60);
         if (ds.lastPlayedDay[msg.sender] != currentDayId) {
             ds.lastPlayedDay[msg.sender] = currentDayId;
@@ -104,43 +108,25 @@ contract QuizGameModeFacet is IQuizGameEvents {
                 "Quiz: Already chosen different mode today.");
         }
 
-        require(question.lastAnswerDay[msg.sender] != currentDayId,
-            "Quiz: Can only answer once per day.");
-        question.lastAnswerDay[msg.sender] = currentDayId;
+        // 🚪 REMOVED: Daily limit - now using leaf-level doors only
+        // Each leaf can only be solved once, enabling true concurrent gameplay
 
-        if (question.mode == LibAppStorage.QuestionMode.Solo) {
-            require(question.firstSolverAddress == address(0), "Quiz: Solo already solved.");
+        // 🚪 NEW: Close THIS leaf's door only
+        ds.leafSolved[_answerLeaf] = true;
+        ds.leafSolver[_answerLeaf] = msg.sender;
+        ds.leafSolveTime[_answerLeaf] = block.timestamp;
+        ds.leafQuestionId[_answerLeaf] = _questionId;
 
-            question.firstSolverAddress = msg.sender;
-            question.firstCorrectAnswerTime = block.timestamp;
-            question.isClosed = true;
+        // Calculate and distribute reward for this specific leaf
+        uint256 totalReward = IQuizGameReward(address(this)).calculateCurrentReward(question.difficultyLevel);
+        uint256 treasuryFee = (totalReward * ds.TREASURY_FEE_PERCENTAGE) / 10000;
+        uint256 rewardForSolver = totalReward - treasuryFee;
 
-            uint256 totalReward = IQuizGameReward(address(this)).calculateCurrentReward(question.difficultyLevel);
-            uint256 treasuryFee = (totalReward * ds.TREASURY_FEE_PERCENTAGE) / 10000;
-            uint256 rewardForSoloSolver = totalReward - treasuryFee;
+        ds.poolManager.mintAndTransferToTreasury(treasuryFee);
+        ds.poolManager.withdrawForUser(msg.sender, rewardForSolver);
 
-            ds.poolManager.mintAndTransferToTreasury(treasuryFee);
-            ds.poolManager.withdrawForUser(msg.sender, rewardForSoloSolver);
-
-            emit RewardDistributed(_questionId, msg.sender, rewardForSoloSolver);
-            emit QuestionClosed(_questionId);
-
-        } else if (question.mode == LibAppStorage.QuestionMode.Pool) {
-            if (question.firstCorrectAnswerTime == 0) {
-                question.firstCorrectAnswerTime = block.timestamp;
-                emit QuestionRewardWindowStarted(_questionId, block.timestamp);
-            }
-
-            uint256 duration = (question.difficultyLevel == 100)
-                ? ds.LEVEL_100_QUESTION_VALIDITY_SECONDS
-                : ds.POOL_REWARD_WINDOW_DURATION_SECONDS;
-
-            require(block.timestamp <= question.firstCorrectAnswerTime + duration,
-                "Quiz: Pool reward window closed.");
-
-            question.poolCorrectSolvers.push(msg.sender);
-        }
-
+        // Emit new leaf-specific events
+        emit LeafSolved(_questionId, _answerLeaf, msg.sender, rewardForSolver);
         emit AnswerSubmitted(_questionId, msg.sender, _answerLeaf, isCorrect);
     }
         function buyHint(uint256 _questionId) public {
@@ -182,6 +168,44 @@ contract QuizGameModeFacet is IQuizGameEvents {
 
         emit QuestionActivatedFromBank(_questionId, msg.sender);
     }
-    /// --- ฟังก์ชันอื่นคงเดิม (buyHint, distributePoolRewards, activateQuestionFromBank) ---
-    /// (ไม่แก้ไขเพิ่มเติม)
+
+    // 🚪 NEW: Leaf Management Functions
+    
+    /// @notice Register a leaf as belonging to a question (for tracking)
+    function registerLeaf(uint256 _questionId, bytes32 _answerLeaf) public onlyAdmin {
+        LibAppStorage.AppStorage storage ds = _appStorage();
+        require(ds.questions[_questionId].correctAnswerHash != bytes32(0), "Quiz: Question does not exist.");
+        
+        ds.leafQuestionId[_answerLeaf] = _questionId;
+        emit LeafRegistered(_questionId, _answerLeaf);
+    }
+
+    /// @notice Check if a specific leaf (quiz) is solved
+    function isLeafSolved(bytes32 _answerLeaf) public view returns (bool) {
+        return LibAppStorage.s().leafSolved[_answerLeaf];
+    }
+
+    /// @notice Get who solved a specific leaf
+    function getLeafSolver(bytes32 _answerLeaf) public view returns (address) {
+        return LibAppStorage.s().leafSolver[_answerLeaf];
+    }
+
+    /// @notice Get when a leaf was solved
+    function getLeafSolveTime(bytes32 _answerLeaf) public view returns (uint256) {
+        return LibAppStorage.s().leafSolveTime[_answerLeaf];
+    }
+
+    /// @notice Get which question a leaf belongs to
+    function getLeafQuestionId(bytes32 _answerLeaf) public view returns (uint256) {
+        return LibAppStorage.s().leafQuestionId[_answerLeaf];
+    }
+
+    /// @notice Admin function to reset a leaf (reopen a quiz)
+    function resetLeaf(bytes32 _answerLeaf) public onlyAdmin {
+        LibAppStorage.AppStorage storage ds = _appStorage();
+        ds.leafSolved[_answerLeaf] = false;
+        ds.leafSolver[_answerLeaf] = address(0);
+        ds.leafSolveTime[_answerLeaf] = 0;
+        // Keep leafQuestionId for tracking
+    }
 }

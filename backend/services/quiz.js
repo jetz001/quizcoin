@@ -63,67 +63,262 @@ async function callGemini(prompt) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
 
-// Generate a single quiz question using AI
-export async function generateQuizQuestion() {
-  const prompt = `Generate a quiz question about general knowledge, science, history, or technology.
-The question must have four options, and only one correct answer.
-Output JSON:
-{
-  "question": "text",
-  "options": ["A","B","C","D"],
-  "answer": "the correct option text",
-  "category": "general|science|history|technology"
-}`;
+// Track recent questions to avoid duplicates
+const recentQuestions = new Set();
+const MAX_RECENT_QUESTIONS = 50;
 
-  try {
-    console.log("⚡ Requesting new quiz question from Gemini...");
-    const raw = await callGemini(prompt);
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    console.log("✅ Quiz question generated successfully");
-    return parsed;
-  } catch (e) {
-    console.error("❌ generateQuizQuestion error:", e.message || e);
-    return null;
+// Function to randomly select difficulty level
+function getRandomDifficultyLevel() {
+  const level = Math.floor(Math.random() * 99) + 1; // Random number 1-99
+  
+  // Determine description based on level
+  let description;
+  if (level <= 30) {
+    description = 'Basic/Easy questions (simple facts, common knowledge)';
+  } else if (level <= 60) {
+    description = 'Medium questions (requires some thinking or specialized knowledge)';
+  } else {
+    description = 'Hard questions (complex concepts, advanced knowledge)';
   }
+  
+  return { level, description };
 }
 
-// Generate mock question for testing (when Gemini is not available)
-function generateMockQuestion() {
-  const mockQuestions = [
+// Generate a single quiz question using AI
+export async function generateQuizQuestion() {
+  // Get random difficulty level for this question
+  const targetDifficulty = getRandomDifficultyLevel();
+  
+  // Add random seed to force fresh responses
+  const randomSeed = Math.floor(Math.random() * 10000);
+  
+  const prompt = `RANDOM_SEED_${randomSeed}: You are a quiz generator. Generate ONLY math or science questions.
+
+ABSOLUTELY FORBIDDEN (WILL BE REJECTED):
+- Any mention of planets, Mars, solar system, astronomy, space
+- Any mention of Paris, landmarks, geography, countries, capitals  
+- Any mention of history, literature, arts, sports, movies, actors
+
+ONLY GENERATE FROM THESE TOPICS:
+- Mathematics: What is 2+2? What is the square root of 16?
+- Chemistry: What is the symbol for gold? What is H2O?
+- Biology: What organelle produces energy? What is DNA?
+- Physics: What is Newton's first law? What is the speed of light?
+
+CRITICAL: Your response MUST include ALL these fields or it will be rejected:
+- question (string)
+- options (array of 4 strings)  
+- answer (string - must match one option exactly)
+- category (string - must be "math" or "science")
+- difficultyLevel (number - must be ${targetDifficulty.level})
+
+EXAMPLE VALID RESPONSE:
+{
+  "question": "What is the chemical symbol for gold?",
+  "options": ["Au", "Ag", "Fe", "Cu"],
+  "answer": "Au", 
+  "category": "science",
+  "difficultyLevel": ${targetDifficulty.level}
+}
+
+Generate a Level ${targetDifficulty.level} math or science question now. SEED: ${randomSeed}`;
+
+  let attempts = 0;
+  const maxAttempts = 3;
+  
+  while (attempts < maxAttempts) {
+    try {
+      console.log(`⚡ Requesting new quiz question from Gemini... (Target Level: ${targetDifficulty.level})`);
+      const raw = await callGemini(prompt);
+      const cleaned = raw.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      
+      // Check for duplicates (semantic similarity)
+      const questionText = parsed.question?.toLowerCase() || '';
+      const questionKey = questionText.substring(0, 50);
+      
+      // Validate required fields first
+      if (!parsed.question || !parsed.options || !parsed.answer || !parsed.difficultyLevel || !parsed.category) {
+        console.log(`❌ AI response missing required fields:`, {
+          hasQuestion: !!parsed.question,
+          hasOptions: !!parsed.options,
+          hasAnswer: !!parsed.answer,
+          hasDifficultyLevel: !!parsed.difficultyLevel,
+          hasCategory: !!parsed.category
+        });
+        attempts++;
+        
+        // If we've exhausted attempts, use fallback
+        if (attempts >= maxAttempts) {
+          console.error("❌ Failed to generate valid question after maximum attempts, using fallback");
+          return generateFallbackQuestion(targetDifficulty.level);
+        }
+        
+        continue;
+      }
+
+      // Check for banned keywords/topics (immediate rejection)
+      const bannedKeywords = [
+        'red planet', 'mars', 'planet', 'solar system', 'astronomy',
+        'paris', 'france', 'eiffel', 'landmark', 'capital',
+        'history', 'literature', 'arts', 'sports', 'geography'
+      ];
+      
+      const hasBannedContent = bannedKeywords.some(keyword => 
+        questionText.includes(keyword)
+      );
+      
+      if (hasBannedContent) {
+        console.log(`🚫 Question contains banned content: "${parsed.question}"`);
+        attempts++;
+        
+        // If we've exhausted attempts, use fallback
+        if (attempts >= maxAttempts) {
+          console.error("❌ Failed to generate valid question after maximum attempts, using fallback");
+          return generateFallbackQuestion(targetDifficulty.level);
+        }
+        
+        continue;
+      }
+      
+      // Check for duplicates against recent questions
+      const isDuplicate = Array.from(recentQuestions).some(recentKey => {
+        // Check for similar sentence structure
+        const hasSimilarStructure = (
+          questionText.includes('which of these') && recentKey.includes('which of these')
+        ) || (
+          questionText.includes('located in') && recentKey.includes('located in')
+        );
+        
+        return hasSimilarStructure || questionKey === recentKey;
+      });
+      
+      if (isDuplicate) {
+        console.log(`⚠️ Similar/duplicate question detected, retrying... (attempt ${attempts + 1})`);
+        attempts++;
+        
+        // If we've exhausted attempts, use fallback
+        if (attempts >= maxAttempts) {
+          console.error("❌ Failed to generate valid question after maximum attempts, using fallback");
+          return generateFallbackQuestion(targetDifficulty.level);
+        }
+        
+        continue;
+      }
+      
+      // Add to recent questions
+      recentQuestions.add(questionKey);
+      if (recentQuestions.size > MAX_RECENT_QUESTIONS) {
+        const firstKey = recentQuestions.values().next().value;
+        recentQuestions.delete(firstKey);
+      }
+      
+      // Ensure difficultyLevel is set correctly
+      parsed.difficultyLevel = targetDifficulty.level;
+      
+      console.log(`✅ Quiz question generated successfully (Level: ${parsed.difficultyLevel}, Category: ${parsed.category})`);
+      return parsed;
+    } catch (e) {
+      console.error("❌ generateQuizQuestion error:", e.message || e);
+      attempts++;
+      if (attempts >= maxAttempts) {
+        console.error("❌ Failed to generate quiz question after maximum attempts, using fallback");
+        return generateFallbackQuestion(targetDifficulty.level);
+      }
+    }
+  }
+  
+  // If we exit the loop without success, use fallback
+  console.error("❌ Exhausted all attempts, using fallback");
+  return generateFallbackQuestion(targetDifficulty.level);
+}
+
+// Fallback question generator when Gemini fails
+function generateFallbackQuestion(difficultyLevel) {
+  const mathQuestions = [
     {
-      question: "What is the capital of Thailand?",
-      options: ["Bangkok", "Chiang Mai", "Phuket", "Pattaya"],
-      answer: "Bangkok",
-      category: "general"
+      question: "What is 7 × 8?",
+      options: ["54", "56", "58", "60"],
+      answer: "56",
+      category: "math",
+      difficultyLevel: difficultyLevel
     },
     {
-      question: "What is 2 + 2?",
-      options: ["3", "4", "5", "6"],
-      answer: "4",
-      category: "general"
+      question: "What is the square root of 64?",
+      options: ["6", "7", "8", "9"],
+      answer: "8",
+      category: "math", 
+      difficultyLevel: difficultyLevel
     },
     {
-      question: "Who invented the telephone?",
-      options: ["Thomas Edison", "Alexander Graham Bell", "Nikola Tesla", "Benjamin Franklin"],
-      answer: "Alexander Graham Bell",
-      category: "history"
+      question: "What is 15% of 200?",
+      options: ["25", "30", "35", "40"],
+      answer: "30",
+      category: "math",
+      difficultyLevel: difficultyLevel
     },
     {
-      question: "What is the largest planet in our solar system?",
-      options: ["Earth", "Mars", "Jupiter", "Saturn"],
-      answer: "Jupiter",
-      category: "science"
+      question: "What is 12 + 18?",
+      options: ["28", "30", "32", "34"],
+      answer: "30",
+      category: "math",
+      difficultyLevel: difficultyLevel
     },
     {
-      question: "Which programming language is known for web development?",
-      options: ["Python", "JavaScript", "C++", "Java"],
-      answer: "JavaScript",
-      category: "technology"
+      question: "What is 9 × 6?",
+      options: ["52", "54", "56", "58"],
+      answer: "54",
+      category: "math",
+      difficultyLevel: difficultyLevel
     }
   ];
 
-  return mockQuestions[Math.floor(Math.random() * mockQuestions.length)];
+  const scienceQuestions = [
+    {
+      question: "What is the chemical symbol for gold?",
+      options: ["Au", "Ag", "Fe", "Cu"],
+      answer: "Au",
+      category: "science",
+      difficultyLevel: difficultyLevel
+    },
+    {
+      question: "What gas do plants absorb during photosynthesis?",
+      options: ["Oxygen", "Carbon dioxide", "Nitrogen", "Hydrogen"],
+      answer: "Carbon dioxide",
+      category: "science",
+      difficultyLevel: difficultyLevel
+    },
+    {
+      question: "What is the powerhouse of the cell?",
+      options: ["Nucleus", "Mitochondria", "Ribosome", "Cytoplasm"],
+      answer: "Mitochondria",
+      category: "science",
+      difficultyLevel: difficultyLevel
+    },
+    {
+      question: "What is the chemical symbol for water?",
+      options: ["H2O", "CO2", "NaCl", "O2"],
+      answer: "H2O",
+      category: "science",
+      difficultyLevel: difficultyLevel
+    },
+    {
+      question: "What is the hardest natural substance?",
+      options: ["Gold", "Iron", "Diamond", "Quartz"],
+      answer: "Diamond",
+      category: "science",
+      difficultyLevel: difficultyLevel
+    }
+  ];
+
+  const allQuestions = [...mathQuestions, ...scienceQuestions];
+  
+  // Add timestamp to make each question unique
+  const randomIndex = Math.floor(Math.random() * allQuestions.length);
+  const selectedQuestion = { ...allQuestions[randomIndex] };
+  
+  console.log(`✅ Generated fallback question (Level: ${difficultyLevel}, Category: ${selectedQuestion.category})`);
+  return selectedQuestion;
 }
 
 // Generate unique batch ID
@@ -138,7 +333,7 @@ export async function generateQuestionBatch(totalQuestions = TOTAL_QUESTIONS, su
   
   // Check if Gemini API is configured
   if (!GEMINI_API_KEY) {
-    console.warn("⚠️ Gemini API not configured, using mock questions for testing");
+    throw new Error("Gemini API key is required. Please configure GEMINI_API_KEY in .env file");
   }
   
   // Initialize batch in database
@@ -158,13 +353,7 @@ export async function generateQuestionBatch(totalQuestions = TOTAL_QUESTIONS, su
       try {
         let quizData;
         
-        if (GEMINI_API_KEY) {
-          quizData = await generateQuizQuestion();
-        } else {
-          // Use mock question if Gemini is not available
-          quizData = generateMockQuestion();
-          console.log(`🔧 Using mock question: ${quizData.question.substring(0, 30)}...`);
-        }
+        quizData = await generateQuizQuestion();
         
         if (!quizData) {
           console.warn(`⚠️ Failed to generate question ${i + 1}/${active}, skipping...`);
@@ -237,11 +426,11 @@ export async function generateSingleQuestion() {
   try {
     let quizData;
     
-    if (GEMINI_API_KEY) {
-      quizData = await generateQuizQuestion();
-    } else {
-      quizData = generateMockQuestion();
+    if (!GEMINI_API_KEY) {
+      throw new Error("Gemini API key is required. Please configure GEMINI_API_KEY in .env file");
     }
+    
+    quizData = await generateQuizQuestion();
     
     if (!quizData) {
       throw new Error("Failed to generate question");
@@ -269,7 +458,7 @@ export async function generateSingleQuestion() {
 export function validateQuizQuestion(quizData) {
   if (!quizData) return false;
   
-  const requiredFields = ['question', 'options', 'answer'];
+  const requiredFields = ['question', 'options', 'answer', 'difficultyLevel'];
   for (const field of requiredFields) {
     if (!quizData[field]) {
       console.warn(`⚠️ Missing required field: ${field}`);
@@ -284,6 +473,14 @@ export function validateQuizQuestion(quizData) {
   
   if (!quizData.options.includes(quizData.answer)) {
     console.warn(`⚠️ Correct answer not found in options`);
+    return false;
+  }
+  
+  // Validate difficulty level matches contract requirements
+  if (typeof quizData.difficultyLevel !== 'number' || 
+      quizData.difficultyLevel < 1 || 
+      quizData.difficultyLevel > 100) {
+    console.warn(`⚠️ Difficulty level must be a number between 1-100`);
     return false;
   }
   
